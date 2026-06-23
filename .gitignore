@@ -1,0 +1,36 @@
+# Secrets & local data (constitution IX)
+.env
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Test / coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Captured HTML debug snapshots (block/structure-change forensics)
+snapshots/
+*.snapshot.html
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
