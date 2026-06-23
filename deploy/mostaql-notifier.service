@@ -1,0 +1,20 @@
+# Sample systemd unit for the single-box deployment (constitution VI/X).
+# Install: copy to /etc/systemd/system/ (edit User/paths), then:
+#   systemctl daemon-reload && systemctl enable --now mostaql-notifier
+[Unit]
+Description=Mostaql Notifier worker (watch-and-notify loop)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/code/mostaql-notify
+EnvironmentFile=/home/%i/code/mostaql-notify/.env
+ExecStart=/home/%i/code/mostaql-notify/.venv/bin/python -m mostaql_notifier
+Restart=always
+RestartSec=10
+# The worker makes only outbound connections; it binds no listening socket.
+
+[Install]
+WantedBy=multi-user.target
