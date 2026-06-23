@@ -1,0 +1,64 @@
+"""Alembic environment — bound to the app models; batch mode for SQLite (research §3)."""
+from __future__ import annotations
+
+from logging.config import fileConfig
+
+from alembic import context
+from sqlalchemy import engine_from_config, pool
+
+from mostaql_notifier.config.secrets import get_secrets
+from mostaql_notifier.db import models  # noqa: F401  (register tables on Base.metadata)
+from mostaql_notifier.db.base import Base
+from mostaql_notifier.db.types import UtcDateTime
+
+config = context.config
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+config.set_main_option("sqlalchemy.url", get_secrets().database_url)
+target_metadata = Base.metadata
+
+
+def render_item(type_, obj, autogen_context):
+    """Render our custom column types with an explicit, importable module path."""
+    if type_ == "type" and isinstance(obj, UtcDateTime):
+        autogen_context.imports.add("import mostaql_notifier.db.types")
+        return "mostaql_notifier.db.types.UtcDateTime()"
+    return False
+
+
+def run_migrations_offline() -> None:
+    context.configure(
+        url=config.get_main_option("sqlalchemy.url"),
+        target_metadata=target_metadata,
+        literal_binds=True,
+        render_as_batch=True,
+        compare_type=True,
+        render_item=render_item,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online() -> None:
+    connectable = engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            render_as_batch=True,
+            compare_type=True,
+            render_item=render_item,
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
