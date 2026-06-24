@@ -1,0 +1,27 @@
+# Next.js dashboard frontend.
+# Build context is `frontend/` (set by docker-compose), so COPY paths are
+# relative to the frontend directory.
+FROM node:20-slim
+
+WORKDIR /app
+
+# Install dependencies first for layer caching. Copy lockfile so `npm ci`
+# gets a reproducible install.
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Copy the rest of the app.
+COPY . .
+
+# NEXT_PUBLIC_* values are BAKED AT BUILD TIME into the client bundle, so the
+# API base URL must be available as a build ARG and promoted to an ENV before
+# `npm run build`. This is the URL the user's BROWSER uses to reach the API
+# (the host-published port), NOT a compose-internal service name.
+ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
+
+RUN npm run build
+
+EXPOSE 3000
+
+CMD ["npm", "start"]
