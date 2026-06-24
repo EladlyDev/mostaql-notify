@@ -34,6 +34,8 @@ def api_env(tmp_path, monkeypatch):
     """
     db_path = tmp_path / "api_test.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+    # Pin CORS origin so tests are hermetic (independent of the developer's real .env).
+    monkeypatch.setenv("FRONTEND_ORIGIN", "http://localhost:3000")
     monkeypatch.setenv("DASHBOARD_SESSION_SECRET", "test-session-secret")
     # default: auth disabled (overridden per client())
     monkeypatch.setenv("DASHBOARD_AUTH_ENABLED", "false")

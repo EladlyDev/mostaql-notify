@@ -53,11 +53,13 @@ def get_home(session: Annotated[Session, Depends(get_db)]) -> HomeOverview:
 
     if latest_run is None:
         health = "unknown"
-    elif latest_run.status == RunStatus.success:
+    elif latest_run.status in (RunStatus.success, RunStatus.partial):
+        # partial = the cycle completed and refreshed data, just skipped some projects
+        # (a normal, operational degraded state) — green, not false-green.
         health = "green"
     elif latest_run.status in (RunStatus.failed, RunStatus.blocked):
         health = "red"
-    else:  # running / partial — never false-green
+    else:  # running — in progress, not yet known
         health = "unknown"
 
     return HomeOverview(
