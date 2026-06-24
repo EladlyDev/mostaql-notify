@@ -1,0 +1,55 @@
+# Local container orchestration for mostaql-notify.
+#
+# IMPORTANT — about NEXT_PUBLIC_API_BASE_URL:
+#   The frontend's API base URL is consumed by code that runs in the user's
+#   BROWSER, not inside the compose network. So it must point at the HOST-
+#   published api port (http://localhost:8000), NOT the internal "api" service
+#   name. It is baked into the JS bundle at build time (build arg below).
+#   Correspondingly, set FRONTEND_ORIGIN=http://localhost:3000 in ../.env so the
+#   API's CORS allows the browser origin.
+#
+# The worker (writes) and api (reads) share the SQLite DB via the ../data volume.
+# SQLite WAL mode (enabled in code) makes concurrent worker-write / api-read safe.
+
+name: mostaql-notify
+
+services:
+  worker:
+    build:
+      context: ..                 # repo root
+      dockerfile: deploy/Dockerfile.api
+    env_file: ../.env
+    volumes:
+      - ../data:/app/data
+    # Run migrations once on startup, then start the watch/notify worker.
+    # This is the single place schema is brought up to head.
+    command: sh -c "alembic upgrade head && mostaql-notifier"
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ..                 # repo root
+      dockerfile: deploy/Dockerfile.api
+    env_file: ../.env
+    volumes:
+      - ../data:/app/data
+    command: uvicorn mostaql_notifier.api.app:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    # Start after the worker has run migrations against the shared volume.
+    depends_on:
+      - worker
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../deploy/Dockerfile.frontend
+      args:
+        # HOST url — see the note at the top of this file.
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped

@@ -1,0 +1,28 @@
+# Keep build contexts lean and avoid leaking local state into images.
+# Applies to the repo-root context (Dockerfile.api).
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+data
+.env
+.env.*
+!.env.example
+tests
+specs
+.specify
+.claude
+deploy
+node_modules
+*.md
+!README.md
+
+# Frontend context (Dockerfile.frontend) — node_modules and build output are
+# regenerated inside the image.
+node_modules
+.next
+out

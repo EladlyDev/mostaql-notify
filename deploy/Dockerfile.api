@@ -1,0 +1,26 @@
+# One image for BOTH the worker and the dashboard API.
+# Build context is the repo root (set by docker-compose), so all COPY paths
+# below are repo-root-relative.
+FROM python:3.11-slim
+
+# Don't write .pyc files; flush stdout/stderr for live container logs.
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Project metadata + migration tooling first (these change rarely, so this
+# layer is cache-friendly). README.md is referenced by setuptools build.
+COPY pyproject.toml README.md alembic.ini ./
+COPY alembic/ ./alembic/
+COPY src/ ./src/
+
+# Editable install with the API extra so the same image can run uvicorn.
+# Secrets are NOT baked here; they arrive at runtime via env_file in compose.
+RUN pip install --no-cache-dir -e ".[api]"
+
+EXPOSE 8000
+
+# Default command is the dashboard API. The compose `worker` service overrides
+# this to run `alembic upgrade head && mostaql-notifier`.
+CMD ["uvicorn", "mostaql_notifier.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

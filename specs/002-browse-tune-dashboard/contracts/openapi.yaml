@@ -1,0 +1,290 @@
+openapi: 3.1.0
+info:
+  title: Mostaql Notifier — Dashboard API (Feature 2)
+  version: 1.0.0
+  description: >
+    Read-mostly JSON API over Feature 1's local SQLite database. Reuses the existing SQLAlchemy
+    models/session; the only write is to the settings table. Single shared-password auth gates every
+    route. Never triggers a scrape or notification.
+servers:
+  - url: http://localhost:8000
+    description: Local API (origin configurable via env)
+
+tags:
+  - name: auth
+  - name: projects
+  - name: home
+  - name: settings
+
+paths:
+  /api/auth/login:
+    post:
+      tags: [auth]
+      summary: Exchange the shared password for a signed session cookie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Authenticated; Set-Cookie session issued
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/auth/logout:
+    post:
+      tags: [auth]
+      summary: Clear the session cookie
+      responses:
+        '200':
+          description: Logged out
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthStatus' }
+
+  /api/auth/status:
+    get:
+      tags: [auth]
+      summary: Whether the current request is authenticated and whether auth is enabled
+      responses:
+        '200':
+          description: Auth status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthStatus' }
+
+  /api/projects:
+    get:
+      tags: [projects]
+      summary: Filtered, sorted, paginated list of collected projects
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: tier, in: query, schema: { type: integer, enum: [1, 2] } }
+        - { name: budget_min, in: query, schema: { type: number } }
+        - { name: budget_max, in: query, schema: { type: number } }
+        - { name: min_hiring_rate, in: query, schema: { type: number, minimum: 0, maximum: 100 }, description: Excludes clients with not-yet-calculated (null) hiring rate. }
+        - { name: bids_min, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: bids_max, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: posted_within_hours, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: site_status, in: query, schema: { type: string, enum: [open, closed, unknown] } }
+        - { name: qualified_only, in: query, schema: { type: boolean, default: false } }
+        - { name: q, in: query, schema: { type: string }, description: Substring search over title, description, skills (Arabic & Latin). }
+        - { name: sort, in: query, schema: { type: string, enum: [posted_at, budget, bids_count, hiring_rate], default: posted_at } }
+        - { name: order, in: query, schema: { type: string, enum: [asc, desc], default: desc } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: A page of projects
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /api/projects/{id}:
+    get:
+      tags: [projects]
+      summary: One project with its client panel and the client's other projects
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Project detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: No such project }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /api/home:
+    get:
+      tags: [home]
+      summary: At-a-glance counts and scraper health
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Overview figures
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HomeOverview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /api/settings:
+    get:
+      tags: [settings]
+      summary: The editable watcher settings with current values and validation specs
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Editable settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SettingsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [settings]
+      summary: Update one or more editable settings (all-or-nothing, validated)
+      description: >
+        Validates every key against the editable registry (type + range + cross-field). On any invalid
+        field, writes nothing and returns 422 with per-field messages. On success writes through the
+        settings table the worker reads on its next cycle.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SettingsUpdate' }
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SettingsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: mn_session
+      description: Signed HttpOnly session cookie issued by /api/auth/login. Bypassed when DASHBOARD_AUTH_ENABLED=false.
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid session
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationError:
+      description: Invalid parameters or settings payload
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ValidationErrorBody' }
+    Unavailable:
+      description: Database/backend unreachable
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    LoginRequest:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string }
+    AuthStatus:
+      type: object
+      properties:
+        authenticated: { type: boolean }
+        auth_enabled: { type: boolean }
+    ProjectListItem:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: string, nullable: true }
+        url: { type: string, nullable: true }
+        client_name: { type: string, nullable: true }
+        client_hiring_rate: { type: number, nullable: true, description: '0–100; null = not yet calculated (لم يحسب بعد)' }
+        budget_min: { type: number, nullable: true }
+        budget_max: { type: number, nullable: true }
+        currency: { type: string, nullable: true }
+        tier: { type: integer, nullable: true, enum: [1, 2] }
+        tier_label: { type: string, nullable: true }
+        bids_count: { type: integer, nullable: true }
+        posted_at: { type: string, format: date-time, nullable: true }
+        site_status: { type: string, enum: [open, closed, unknown] }
+        eval_status: { type: string, enum: [baseline, pending, qualified, disqualified, eval_error] }
+        qualified: { type: boolean }
+    ProjectListResponse:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ProjectListItem' } }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+    ClientPanel:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string, nullable: true }
+        hiring_rate: { type: number, nullable: true }
+        projects_posted: { type: integer, nullable: true }
+        projects_open: { type: integer, nullable: true }
+        hires_count: { type: integer, nullable: true }
+        avg_rating: { type: number, nullable: true }
+        reviews_count: { type: integer, nullable: true }
+        total_spent: { type: number, nullable: true }
+        country: { type: string, nullable: true }
+        member_since: { type: string, nullable: true }
+        verified: { type: boolean }
+    ProjectDetail:
+      allOf:
+        - $ref: '#/components/schemas/ProjectListItem'
+        - type: object
+          properties:
+            description: { type: string, nullable: true }
+            category: { type: string, nullable: true }
+            skills: { type: array, items: { type: string }, nullable: true }
+            scraped_at: { type: string, format: date-time, nullable: true }
+            client: { oneOf: [{ $ref: '#/components/schemas/ClientPanel' }, { type: 'null' }] }
+            same_client_projects:
+              type: array
+              items: { $ref: '#/components/schemas/ProjectListItem' }
+    HomeOverview:
+      type: object
+      properties:
+        found_today: { type: integer }
+        qualified_today: { type: integer }
+        total_projects: { type: integer }
+        total_clients: { type: integer }
+        last_successful_scrape: { type: string, format: date-time, nullable: true }
+        latest_run_status: { type: string, nullable: true, enum: [running, success, partial, failed, blocked, null] }
+        health: { type: string, enum: [green, red, unknown] }
+    SettingItem:
+      type: object
+      properties:
+        key: { type: string }
+        value: { oneOf: [{ type: number }, { type: string }] }
+        type: { type: string, enum: [int, float] }
+        min: { type: number, nullable: true }
+        max: { type: number, nullable: true }
+        label: { type: string }
+    SettingsResponse:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/SettingItem' } }
+    SettingsUpdate:
+      type: object
+      description: Partial map of editable setting keys to new values.
+      additionalProperties: { oneOf: [{ type: number }, { type: integer }] }
+      example:
+        budget_primary_floor: 300
+        min_hiring_rate: 80
+    Error:
+      type: object
+      properties:
+        detail: { type: string }
+    ValidationErrorBody:
+      type: object
+      properties:
+        detail: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              message: { type: string }
