@@ -18,9 +18,13 @@ def _make_engine(url: str):
     engine = sa.create_engine(url, future=True)
     if engine.dialect.name == "sqlite":
         @event.listens_for(engine, "connect")
-        def _fk_on(dbapi_conn, _rec):  # enforce FKs on SQLite
+        def _sqlite_pragmas(dbapi_conn, _rec):
+            # FKs on (worker invariants); WAL + busy_timeout so the worker's writes and the
+            # dashboard API's reads don't contend on the shared ./data/mostaql.db (Feature 2).
             cur = dbapi_conn.cursor()
             cur.execute("PRAGMA foreign_keys=ON")
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA busy_timeout=5000")
             cur.close()
     return engine
 
