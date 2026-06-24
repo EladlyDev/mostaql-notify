@@ -13,6 +13,13 @@ class Secrets(BaseSettings):
     telegram_chat_id: str = ""
     database_url: str = "sqlite:///./data/mostaql.db"
 
+    # Dashboard (Feature 2). Auth gates every data/settings route; trivially disableable for
+    # local-only use via dashboard_auth_enabled=false (constitution IX — local security).
+    dashboard_auth_enabled: bool = True
+    dashboard_password: str = ""
+    dashboard_session_secret: str = ""
+    frontend_origin: str = "http://localhost:3000"
+
 
 @lru_cache
 def get_secrets() -> Secrets:
@@ -25,4 +32,18 @@ def require_telegram(secrets: Secrets) -> None:
     if missing:
         raise RuntimeError(
             f"Missing required secrets in .env: {', '.join(missing)} (see .env.example)"
+        )
+
+
+def require_dashboard(secrets: Secrets) -> None:
+    """Fail loud at startup if the dashboard is auth-enabled but the password/secret are missing."""
+    if not secrets.dashboard_auth_enabled:
+        return
+    missing = [
+        k for k in ("dashboard_password", "dashboard_session_secret") if not getattr(secrets, k)
+    ]
+    if missing:
+        raise RuntimeError(
+            f"Missing required dashboard secrets in .env: {', '.join(missing)} "
+            "(set DASHBOARD_AUTH_ENABLED=false to run with no login, or see .env.example)"
         )
