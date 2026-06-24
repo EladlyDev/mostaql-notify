@@ -165,10 +165,10 @@ def test_qualified_today_zero_when_none_qualified(api_env):
     ("status", "expected_health"),
     [
         (RunStatus.success, "green"),
+        (RunStatus.partial, "green"),  # completed cycle with skipped projects = operational
         (RunStatus.failed, "red"),
         (RunStatus.blocked, "red"),
         (RunStatus.running, "unknown"),
-        (RunStatus.partial, "unknown"),
     ],
 )
 def test_health_single_latest_run(api_env, status, expected_health):
@@ -185,8 +185,8 @@ def test_health_single_latest_run(api_env, status, expected_health):
     body = _get_home(api_env)
     assert body["latest_run_status"] == status.value
     assert body["health"] == expected_health
-    # running / partial must never be reported as green.
-    if status in (RunStatus.running, RunStatus.partial):
+    # an in-progress (running) or no-runs state must never be reported as green.
+    if status == RunStatus.running:
         assert body["health"] != "green"
 
 
