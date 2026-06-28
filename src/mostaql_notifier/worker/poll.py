@@ -20,6 +20,7 @@ from ..db.models import (
     derive_client_key,
 )
 from ..db.types import utcnow
+from ..notify.format import build_project_keyboard
 from ..qualify.budget_policy import load_policy, recompute_floor, save_policy
 from ..qualify.filters import qualify
 from ..scraper.mostaql import parse_listing, parse_project_page
@@ -34,8 +35,14 @@ from ..worker.politeness import polite_delay
 log = logging.getLogger("mostaql.poll")
 
 
-async def run_poll_cycle(session, fetcher, sender, settings, *, now=None) -> ScrapeRun:
+async def run_poll_cycle(session, fetcher, sender, settings, *, now=None) -> ScrapeRun | None:
     settings.reload()
+    # Owner-initiated pause (Feature 3, FR-028): skip the cycle QUIETLY — write no scrape_run so an
+    # intentional idle never turns the health light red (a pause is not a fault). Checked before any
+    # run row is created; the bot/dashboard toggle the watcher_paused settings flag.
+    if settings.get_bool("watcher_paused"):
+        log.info("watcher paused; skipping poll cycle (no scrape_run written)")
+        return None
     now = now or utcnow()
     owner_tz = settings.get_str("owner_timezone")
     breaker = CircuitBreaker(session)
@@ -174,7 +181,8 @@ async def _drain_unnotified(session, sender, settings, run, owner_tz) -> None:
         )
         try:
             await sender.send_project_notification(
-                session, project, client, now_utc=utcnow(), owner_tz=owner_tz
+                session, project, client, now_utc=utcnow(), owner_tz=owner_tz,
+                reply_markup=build_project_keyboard(project),  # Feature 3 inline action buttons
             )
         except Exception as exc:  # permanent delivery failure -> terminal + fail-loud alert
             log.exception("permanent delivery failure for project %s", project.mostaql_id)

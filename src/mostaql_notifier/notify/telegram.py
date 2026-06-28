@@ -43,13 +43,18 @@ class TelegramSender:
             await self._bot.shutdown()
             self._bot = None
 
-    async def _send(self, text: str) -> None:
-        """Send one HTML message, retrying transient network failures with exponential backoff."""
+    async def _send(self, text: str, reply_markup=None) -> None:
+        """Send one HTML message, retrying transient network failures with exponential backoff.
+
+        ``reply_markup`` (e.g. the project action keyboard) is only passed through when present, so
+        the message API surface is unchanged for plain alerts/heartbeats.
+        """
         bot = self._get_bot()
+        extra = {"reply_markup": reply_markup} if reply_markup is not None else {}
         last_exc: Exception | None = None
         for attempt in range(_SEND_TRIES):
             try:
-                await bot.send_message(self._chat_id, text, parse_mode="HTML")
+                await bot.send_message(self._chat_id, text, parse_mode="HTML", **extra)
                 return
             except telegram.error.BadRequest:
                 # Permanent (malformed HTML / too-long / bad entities). BadRequest subclasses
@@ -70,6 +75,7 @@ class TelegramSender:
         *,
         now_utc: datetime,
         owner_tz: str,
+        reply_markup=None,
     ) -> bool:
         """Send a project notification once; return True if newly sent, False if skipped/failed.
 
@@ -87,7 +93,11 @@ class TelegramSender:
 
         text = build_project_message(project, client, now_utc=now_utc, owner_tz=owner_tz)
         try:
-            await self._send(text)
+            # Pass reply_markup only when provided so the existing _send stubs/signature are unaffected.
+            if reply_markup is not None:
+                await self._send(text, reply_markup=reply_markup)
+            else:
+                await self._send(text)
         except telegram.error.BadRequest:
             # Permanent failure: do NOT masquerade as retryable (would strand the project forever
             # in notified=False / no-log). Propagate so the caller can mark it terminal + alert.

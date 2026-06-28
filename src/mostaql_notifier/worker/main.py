@@ -53,6 +53,9 @@ async def main() -> None:
         with Session() as s:
             settings = SettingsStore(s)
             run = await run_poll_cycle(s, fetcher, sender, settings)
+            if run is None:  # watcher intentionally paused — skipped quietly, no run row
+                log.info("poll skipped: watcher paused")
+                return
             log.info("run %s: found=%s new=%s updated=%s errors=%s status=%s",
                      run.id, run.found_count, run.new_count, run.updated_count,
                      run.error_count, run.status.value)
