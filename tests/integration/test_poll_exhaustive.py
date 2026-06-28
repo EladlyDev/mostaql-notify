@@ -741,7 +741,7 @@ async def test_qualified_but_send_failed_is_retried_next_cycle(db_session, setti
     fetcher1 = FakeFetcher(_routes())
     sender1 = make_sender()
 
-    async def _timeout_send(text):
+    async def _timeout_send(text, reply_markup=None):
         raise telegram.error.TimedOut()
 
     sender1._send = _timeout_send  # type: ignore[method-assign]

@@ -67,8 +67,8 @@ def _put_setting(session, key: str, value: str, value_type: str) -> None:
 # ===========================================================================
 
 
-def test_defaults_count_is_35():
-    assert len(DEFAULTS) == 35
+def test_defaults_count_is_39():
+    assert len(DEFAULTS) == 39
 
 
 def test_defaults_every_entry_is_value_type_pair():

@@ -32,7 +32,9 @@ def make_sender() -> TelegramSender:
     sender = TelegramSender("test-token", "test-chat")
     sent: list[str] = []
 
-    async def _fake_send(text: str) -> None:
+    async def _fake_send(text: str, reply_markup=None) -> None:
+        # Mirrors the real _send signature (Feature 3 added the optional reply_markup so project
+        # notifications can carry inline action buttons).
         sent.append(text)
 
     sender._send = _fake_send  # type: ignore[method-assign]
