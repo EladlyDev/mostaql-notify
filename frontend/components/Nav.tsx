@@ -3,7 +3,15 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Home, ListChecks, Settings, LogOut, Menu, X } from "lucide-react";
+import {
+  Home,
+  ListChecks,
+  KanbanSquare,
+  Settings,
+  LogOut,
+  Menu,
+  X,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { logout } from "@/lib/api";
@@ -12,6 +20,7 @@ import { Button } from "@/components/ui/button";
 const NAV_ITEMS = [
   { href: "/", label: "الرئيسية", icon: Home },
   { href: "/projects", label: "المشاريع", icon: ListChecks },
+  { href: "/board", label: "اللوحة", icon: KanbanSquare },
   { href: "/settings", label: "الإعدادات", icon: Settings },
 ] as const;
 

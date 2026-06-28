@@ -15,6 +15,8 @@ import {
 } from "@/lib/format";
 import { Bidi } from "@/components/Bidi";
 import { ClientPanel } from "@/components/ClientPanel";
+import { PersonalPanel } from "@/components/personal/PersonalPanel";
+import { WorkspacePanel } from "@/components/workspace/WorkspacePanel";
 import { EmptyState } from "@/components/states/EmptyState";
 import { ErrorState } from "@/components/states/ErrorState";
 import { Loading } from "@/components/states/Loading";
@@ -87,6 +89,11 @@ function ProjectDetailView({ data }: { data: ProjectDetail }) {
         )}
       </header>
 
+      {/* Personal CRM controls (Feature 3, US1) */}
+      {data.personal && (
+        <PersonalPanel key={data.id} projectId={data.id} personal={data.personal} />
+      )}
+
       {/* Meta row */}
       <Card>
         <CardContent>
@@ -151,6 +158,15 @@ function ProjectDetailView({ data }: { data: ProjectDetail }) {
           )}
         </CardContent>
       </Card>
+
+      {/* Per-project workspace: markdown notes + file attachments (Feature 3, US2) */}
+      {data.personal && (
+        <WorkspacePanel
+          key={data.id}
+          projectId={data.id}
+          initialNotes={data.personal.notes}
+        />
+      )}
 
       {/* Client reputation panel */}
       <ClientPanel client={data.client} />

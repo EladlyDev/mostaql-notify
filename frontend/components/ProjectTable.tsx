@@ -11,7 +11,10 @@ import {
   formatNumber,
   formatRelative,
 } from "@/lib/format";
+import { useStatuses } from "@/lib/useStatuses";
 import { Bidi } from "@/components/Bidi";
+import { FavoriteToggle } from "@/components/personal/FavoriteToggle";
+import { ProjectRowMenu } from "@/components/personal/ProjectRowMenu";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -62,11 +65,13 @@ export function QualifiedBadge({ qualified }: { qualified: boolean }) {
 }
 
 export function ProjectTable({ items }: { items: ProjectListItem[] }) {
+  const { data: statuses } = useStatuses();
   return (
     <div className="overflow-x-auto rounded-lg border">
       <Table>
         <TableHeader>
           <TableRow>
+            <TableHead className="text-start">المتابعة</TableHead>
             <TableHead className="text-start">المشروع</TableHead>
             <TableHead className="text-start">العميل</TableHead>
             <TableHead className="text-start">الميزانية</TableHead>
@@ -83,6 +88,22 @@ export function ProjectTable({ items }: { items: ProjectListItem[] }) {
         <TableBody>
           {items.map((p) => (
             <TableRow key={p.id} className="align-top">
+              <TableCell>
+                <div className="flex items-center gap-1.5">
+                  <FavoriteToggle projectId={p.id} favorite={p.favorite} size="icon-sm" />
+                  <div className="flex flex-col items-start gap-1">
+                    <Badge variant="secondary" className="whitespace-nowrap">
+                      <Bidi>{p.personal_status_label}</Bidi>
+                    </Badge>
+                    {p.hidden && (
+                      <Badge variant="outline" className="text-muted-foreground">
+                        مخفي
+                      </Badge>
+                    )}
+                  </div>
+                  <ProjectRowMenu item={p} statuses={statuses ?? []} />
+                </div>
+              </TableCell>
               <TableCell className="max-w-xs whitespace-normal">
                 <Link
                   href={`/projects/${p.id}`}

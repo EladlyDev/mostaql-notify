@@ -13,7 +13,9 @@ import { getHome } from "@/lib/api";
 import type { HomeOverview } from "@/lib/types";
 import { formatAbsolute, formatRelative } from "@/lib/format";
 import { Bidi } from "@/components/Bidi";
+import { PauseControl } from "@/components/PauseControl";
 import { HealthLight, type Health } from "@/components/HealthLight";
+import { Badge } from "@/components/ui/badge";
 import { StatCard } from "@/components/StatCard";
 import { Loading } from "@/components/states/Loading";
 import { ErrorState } from "@/components/states/ErrorState";
@@ -49,14 +51,26 @@ function HealthSection({ data }: { data: HomeOverview }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex items-center gap-3">
-          <HealthLight health={health} label={HEALTH_LABEL[health]} />
-          <div className="space-y-0.5">
-            <p className="text-base font-medium">{HEALTH_LABEL[health]}</p>
-            <p className="text-sm text-muted-foreground">
-              {HEALTH_HINT[health]}
-            </p>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <HealthLight health={health} label={HEALTH_LABEL[health]} />
+            <div className="space-y-0.5">
+              <p className="flex items-center gap-2 text-base font-medium">
+                {HEALTH_LABEL[health]}
+                {data.paused && (
+                  <Badge variant="outline" className="text-muted-foreground">
+                    متوقّف مؤقتًا
+                  </Badge>
+                )}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {data.paused
+                  ? "المراقبة متوقّفة مؤقتًا بطلب منك — لا يُعدّ هذا عطلًا."
+                  : HEALTH_HINT[health]}
+              </p>
+            </div>
           </div>
+          <PauseControl />
         </div>
 
         <dl className="grid gap-4 border-t pt-4 sm:grid-cols-2">

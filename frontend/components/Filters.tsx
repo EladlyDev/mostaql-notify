@@ -9,6 +9,7 @@ import {
   type SortOrder,
   type UseProjectsResult,
 } from "@/lib/useProjects";
+import { useStatuses } from "@/lib/useStatuses";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -72,6 +73,7 @@ function NumberField({
 export function Filters({ controller }: { controller: UseProjectsResult }) {
   const { params, filtersActive, setFilters, setSort, clearFilters } =
     controller;
+  const { data: statusOptions } = useStatuses();
 
   // Debounced keyword search (~300ms) decoupled from the committed URL value.
   const [qDraft, setQDraft] = useState(params.q ?? "");
@@ -207,6 +209,28 @@ export function Filters({ controller }: { controller: UseProjectsResult }) {
         </div>
 
         <div className="flex flex-col gap-1.5">
+          <Label htmlFor="personal_status">مرحلتي</Label>
+          <Select
+            value={params.personal_status ?? ANY}
+            onValueChange={(v) =>
+              patch({ personal_status: v && v !== ANY ? v : undefined })
+            }
+          >
+            <SelectTrigger id="personal_status">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ANY}>الكل</SelectItem>
+              {(statusOptions ?? []).map((s) => (
+                <SelectItem key={s.key} value={s.key}>
+                  {s.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
           <Label htmlFor="posted_within_hours">نُشر خلال</Label>
           <Select
             value={
@@ -275,15 +299,39 @@ export function Filters({ controller }: { controller: UseProjectsResult }) {
 
       {/* Toggle + clear row */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Switch
-            id="qualified_only"
-            checked={params.qualified_only ?? false}
-            onCheckedChange={(checked) =>
-              patch({ qualified_only: checked ? true : undefined })
-            }
-          />
-          <Label htmlFor="qualified_only">المشاريع المؤهلة فقط</Label>
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2">
+            <Switch
+              id="qualified_only"
+              checked={params.qualified_only ?? false}
+              onCheckedChange={(checked) =>
+                patch({ qualified_only: checked ? true : undefined })
+              }
+            />
+            <Label htmlFor="qualified_only">المشاريع المؤهلة فقط</Label>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Switch
+              id="favorites_only"
+              checked={params.favorites_only ?? false}
+              onCheckedChange={(checked) =>
+                patch({ favorites_only: checked ? true : undefined })
+              }
+            />
+            <Label htmlFor="favorites_only">المفضّلة فقط</Label>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Switch
+              id="include_hidden"
+              checked={params.include_hidden ?? false}
+              onCheckedChange={(checked) =>
+                patch({ include_hidden: checked ? true : undefined })
+              }
+            />
+            <Label htmlFor="include_hidden">إظهار المخفية</Label>
+          </div>
         </div>
 
         <Button
