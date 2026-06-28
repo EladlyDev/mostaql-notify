@@ -13,9 +13,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, nulls_last, select
 from sqlalchemy.orm import Session, contains_eager
 
-from ...db.models import Client, EvalStatus, Project
+from ...db.models import Client, EvalStatus, PersonalRecord, Project
+from ...personal import statuses
 from ..deps import get_db
-from ..schemas import ClientPanel, ProjectDetail, ProjectListItem, ProjectListResponse
+from ..schemas import (
+    ClientPanel,
+    ProjectDetail,
+    ProjectListItem,
+    ProjectListResponse,
+)
+from ..schemas import (
+    PersonalRecord as PersonalRecordDTO,
+)
 
 router = APIRouter(tags=["projects"])
 
@@ -34,8 +43,20 @@ def _f(x: object | None) -> float | None:
     return float(x) if x is not None else None  # type: ignore[arg-type]
 
 
-def to_list_item(p: Project) -> ProjectListItem:
-    """Build a list-item DTO explicitly from a Project (and its optional client)."""
+def to_list_item(
+    p: Project,
+    status_labels: dict[str, str] | None = None,
+    default_status: str = "new",
+) -> ProjectListItem:
+    """Build a list-item DTO explicitly from a Project (and its optional client + personal record).
+
+    The personal projection is defaulted when no record exists (favorite=False, status=default,
+    tags=[], hidden=False). ``status_labels`` (slug→Arabic label) is passed in so the label is
+    resolved from config without a per-row query; an unmapped slug falls back to the slug itself.
+    """
+    pr = p.personal  # loaded via contains_eager in the list query; lazy for the few detail siblings
+    p_status = pr.status if pr is not None else default_status
+    labels = status_labels or {}
     return ProjectListItem(
         id=p.id,
         title=p.title,
@@ -52,7 +73,47 @@ def to_list_item(p: Project) -> ProjectListItem:
         site_status=p.site_status.value,
         eval_status=p.eval_status.value,
         qualified=(p.eval_status == EvalStatus.qualified),
+        favorite=pr.favorite if pr is not None else False,
+        personal_status=p_status,
+        personal_status_label=labels.get(p_status, p_status),
+        tags=list(pr.tags) if pr is not None and pr.tags else [],
+        hidden=pr.hidden if pr is not None else False,
     )
+
+
+def to_personal_dto(rec: PersonalRecord | None, project_id: int, status_labels: dict[str, str],
+                    default_status: str) -> PersonalRecordDTO:
+    """Build the embedded personal DTO from a record (or defaults when none exists yet)."""
+    if rec is None:
+        return PersonalRecordDTO(
+            project_id=project_id,
+            favorite=False,
+            status=default_status,
+            status_label=status_labels.get(default_status, default_status),
+            tags=[],
+            notes="",
+            board_position=0.0,
+            hidden=False,
+        )
+    return PersonalRecordDTO(
+        project_id=rec.project_id,
+        favorite=rec.favorite,
+        status=rec.status,
+        status_label=status_labels.get(rec.status, rec.status),
+        tags=list(rec.tags or []),
+        applied_at=rec.applied_at,
+        won_amount=_f(rec.won_amount),
+        lost_reason=rec.lost_reason,
+        notes=rec.notes,
+        board_position=rec.board_position,
+        hidden=rec.hidden,
+        status_changed_at=rec.status_changed_at,
+        reminder_at=rec.reminder_at,
+    )
+
+
+def _status_label_map(session: Session) -> dict[str, str]:
+    return {s["key"]: s["label"] for s in statuses.list_statuses(session)}
 
 
 def to_client_panel(c: Client) -> ClientPanel:
@@ -95,6 +156,9 @@ def list_projects(
     site_status: Annotated[Literal["open", "closed", "unknown"] | None, Query()] = None,
     qualified_only: Annotated[bool, Query()] = False,
     q: Annotated[str | None, Query()] = None,
+    personal_status: Annotated[str | None, Query()] = None,
+    favorites_only: Annotated[bool, Query()] = False,
+    include_hidden: Annotated[bool, Query()] = False,
     sort: Annotated[Literal["posted_at", "budget", "bids_count", "hiring_rate"], Query()] = "posted_at",
     order: Annotated[Literal["asc", "desc"], Query()] = "desc",
     page: Annotated[int, Query(ge=1)] = 1,
@@ -102,12 +166,21 @@ def list_projects(
 ) -> ProjectListResponse:
     """List projects with optional filters (AND-combined), sorting and pagination.
 
-    Outer-joins Client so client-less projects still appear (client fields null). Enum-like
-    params (tier, site_status, sort, order) are constrained so invalid values yield 422.
+    Outer-joins Client and the personal record so client-less / record-less projects still appear
+    (those fields defaulted). Feature 3 adds the personal projection + ``personal_status`` /
+    ``favorites_only`` / ``include_hidden`` filters; hidden projects are excluded unless
+    ``include_hidden``. Enum-like params (tier, site_status, sort, order) are constrained → 422.
     """
-    # LEFT OUTER JOIN so projects without a client are retained; contains_eager populates the
-    # relationship from the same join (avoids an N+1 lazy load per row).
-    stmt = select(Project).outerjoin(Project.client).options(contains_eager(Project.client))
+    default_status = statuses.default_status(db)
+    status_labels = _status_label_map(db)
+    # LEFT OUTER JOIN client + personal so record-less projects are retained; contains_eager
+    # populates both relationships from the same joins (avoids N+1 lazy loads per row).
+    stmt = (
+        select(Project)
+        .outerjoin(Project.client)
+        .outerjoin(Project.personal)
+        .options(contains_eager(Project.client), contains_eager(Project.personal))
+    )
 
     if tier is not None:
         stmt = stmt.where(Project.tier == tier)
@@ -129,6 +202,18 @@ def list_projects(
         stmt = stmt.where(Project.site_status == site_status)
     if qualified_only:
         stmt = stmt.where(Project.eval_status == EvalStatus.qualified)
+    # Personal filters (Feature 3). A missing personal record counts as the default status and
+    # not-favorite / not-hidden, so coalesce/NULL handling keeps record-less projects visible.
+    if personal_status is not None:
+        stmt = stmt.where(
+            func.coalesce(PersonalRecord.status, default_status) == personal_status
+        )
+    if favorites_only:
+        stmt = stmt.where(PersonalRecord.favorite.is_(True))
+    if not include_hidden:
+        stmt = stmt.where(
+            (PersonalRecord.hidden.is_(None)) | (PersonalRecord.hidden.is_(False))
+        )
     if q:
         pattern = f"%{_like_escape(q)}%"
         stmt = stmt.where(
@@ -149,7 +234,7 @@ def list_projects(
     projects = db.scalars(stmt).all()
 
     return ProjectListResponse(
-        items=[to_list_item(p) for p in projects],
+        items=[to_list_item(p, status_labels, default_status) for p in projects],
         total=total,
         page=page,
         page_size=page_size,
@@ -163,6 +248,9 @@ def get_project(id: int, db: Annotated[Session, Depends(get_db)]) -> ProjectDeta
     if project is None:
         raise HTTPException(404, "No such project")
 
+    default_status = statuses.default_status(db)
+    status_labels = _status_label_map(db)
+
     # Sibling projects: same client, excluding self (none if client-less).
     same_client: list[ProjectListItem] = []
     if project.client_id is not None:
@@ -172,9 +260,9 @@ def get_project(id: int, db: Annotated[Session, Depends(get_db)]) -> ProjectDeta
                 Project.id != project.id,
             )
         ).all()
-        same_client = [to_list_item(p) for p in siblings]
+        same_client = [to_list_item(p, status_labels, default_status) for p in siblings]
 
-    base = to_list_item(project)
+    base = to_list_item(project, status_labels, default_status)
     return ProjectDetail(
         **base.model_dump(),
         description=project.description,
@@ -183,4 +271,5 @@ def get_project(id: int, db: Annotated[Session, Depends(get_db)]) -> ProjectDeta
         scraped_at=project.scraped_at,
         client=to_client_panel(project.client) if project.client else None,
         same_client_projects=same_client,
+        personal=to_personal_dto(project.personal, project.id, status_labels, default_status),
     )

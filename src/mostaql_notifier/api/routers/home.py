@@ -70,4 +70,6 @@ def get_home(session: Annotated[Session, Depends(get_db)]) -> HomeOverview:
         last_successful_scrape=last_successful_scrape,
         latest_run_status=latest_run_status,
         health=health,
+        # Feature 3 — intentional idle surfaced distinctly from a fault (constitution VI).
+        paused=SettingsStore(session).get_bool("watcher_paused"),
     )
