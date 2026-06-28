@@ -677,6 +677,8 @@ EXPECTED_KEYS = {
     "id", "title", "url", "client_name", "client_hiring_rate", "budget_min",
     "budget_max", "currency", "tier", "tier_label", "bids_count", "posted_at",
     "site_status", "eval_status", "qualified",
+    # Feature 3 — personal projection (defaulted when no record exists).
+    "favorite", "personal_status", "personal_status_label", "tags", "hidden",
 }
 
 

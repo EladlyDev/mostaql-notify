@@ -135,7 +135,7 @@ def test_upgrade_head_is_idempotent(tmp_path, monkeypatch, isolate_globals):
             count = conn.execute(sa.text("SELECT COUNT(*) FROM alembic_version")).scalar()
     finally:
         eng.dispose()
-    assert version == "8d0f765b34e3"
+    assert version == "8e6070483eaf"  # head advanced to the Feature 3 personal-layer migration
     assert count == 1
 
 

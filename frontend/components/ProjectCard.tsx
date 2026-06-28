@@ -11,11 +11,15 @@ import {
   formatNumber,
   formatRelative,
 } from "@/lib/format";
+import { useStatuses } from "@/lib/useStatuses";
 import { Bidi } from "@/components/Bidi";
+import { FavoriteToggle } from "@/components/personal/FavoriteToggle";
+import { ProjectRowMenu } from "@/components/personal/ProjectRowMenu";
 import {
   QualifiedBadge,
   SiteStatusBadge,
 } from "@/components/ProjectTable";
+import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -35,7 +39,13 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function ProjectCardItem({ p }: { p: ProjectListItem }) {
+function ProjectCardItem({
+  p,
+  statuses,
+}: {
+  p: ProjectListItem;
+  statuses: { key: string; label: string }[];
+}) {
   return (
     <Card className="flex h-full flex-col">
       <CardHeader>
@@ -50,10 +60,22 @@ function ProjectCardItem({ p }: { p: ProjectListItem }) {
               </Bidi>
             </Link>
           </CardTitle>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <SiteStatusBadge status={p.site_status} />
-            <QualifiedBadge qualified={p.qualified} />
+          <div className="flex shrink-0 items-center gap-1">
+            <FavoriteToggle projectId={p.id} favorite={p.favorite} size="icon-sm" />
+            <ProjectRowMenu item={p} statuses={statuses} />
           </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge variant="secondary">
+            <Bidi>{p.personal_status_label}</Bidi>
+          </Badge>
+          {p.hidden && (
+            <Badge variant="outline" className="text-muted-foreground">
+              مخفي
+            </Badge>
+          )}
+          <SiteStatusBadge status={p.site_status} />
+          <QualifiedBadge qualified={p.qualified} />
         </div>
         <p className="text-sm text-muted-foreground">
           <Bidi>{p.client_name ?? DASH}</Bidi>
@@ -117,10 +139,11 @@ function ProjectCardItem({ p }: { p: ProjectListItem }) {
 }
 
 export function ProjectCard({ items }: { items: ProjectListItem[] }) {
+  const { data: statuses } = useStatuses();
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {items.map((p) => (
-        <ProjectCardItem key={p.id} p={p} />
+        <ProjectCardItem key={p.id} p={p} statuses={statuses ?? []} />
       ))}
     </div>
   );

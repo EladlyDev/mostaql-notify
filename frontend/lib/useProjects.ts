@@ -26,6 +26,10 @@ export interface ProjectFilters {
   site_status?: SiteStatus;
   qualified_only?: boolean;
   q?: string;
+  // Feature 3 — personal filters.
+  personal_status?: string;
+  favorites_only?: boolean;
+  include_hidden?: boolean;
 }
 
 export interface ProjectParams extends ProjectFilters {
@@ -51,6 +55,9 @@ const FILTER_KEYS: (keyof ProjectFilters)[] = [
   "site_status",
   "qualified_only",
   "q",
+  "personal_status",
+  "favorites_only",
+  "include_hidden",
 ];
 
 function num(raw: string | null): number | undefined {
@@ -103,6 +110,9 @@ function parseParams(sp: URLSearchParams): ProjectParams {
     site_status,
     qualified_only: sp.get("qualified_only") === "true" ? true : undefined,
     q: q && q.trim() !== "" ? q : undefined,
+    personal_status: sp.get("personal_status") ?? undefined,
+    favorites_only: sp.get("favorites_only") === "true" ? true : undefined,
+    include_hidden: sp.get("include_hidden") === "true" ? true : undefined,
     sort,
     order,
     page,
@@ -125,6 +135,9 @@ function toQueryParams(
     site_status: p.site_status,
     qualified_only: p.qualified_only ? true : undefined,
     q: p.q,
+    personal_status: p.personal_status,
+    favorites_only: p.favorites_only ? true : undefined,
+    include_hidden: p.include_hidden ? true : undefined,
     sort: p.sort === DEFAULT_SORT ? undefined : p.sort,
     order: p.order === DEFAULT_ORDER ? undefined : p.order,
     page: p.page > 1 ? p.page : undefined,

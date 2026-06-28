@@ -1,0 +1,309 @@
+"""Adversarial / property edge tests for the Feature 3 Telegram callback codec, the inline keyboard
+button ordering, and the sender's conditional ``reply_markup`` pass-through.
+
+These complement (and deliberately do NOT duplicate) ``test_telegram_keyboard.py`` and
+``test_telegram_sender.py``:
+
+  * the codec is security-relevant — it round-trips a trusted action+id, must stay inside Telegram's
+    hard 64-byte ``callback_data`` cap, and must reject anything that isn't ours so the inbound bot
+    can ignore foreign/garbage payloads;
+  * the keyboard's button ORDER (not just its set) is contractual (Arabic-first layout);
+  * the sender must forward ``reply_markup`` to the underlying send ONLY when one is supplied.
+"""
+from __future__ import annotations
+
+import itertools
+from datetime import timedelta
+from decimal import Decimal
+from unittest.mock import AsyncMock
+
+import pytest
+
+from mostaql_notifier.db.models import Client, Project
+from mostaql_notifier.db.types import utcnow
+from mostaql_notifier.notify.format import (
+    CALLBACK_PREFIX,
+    CB_APPLIED,
+    CB_DISMISS,
+    CB_FAVORITE,
+    CB_NOTE,
+    build_callback_data,
+    build_project_keyboard,
+    parse_callback_data,
+)
+from mostaql_notifier.notify.telegram import TelegramSender
+
+_ACTIONS = [CB_FAVORITE, CB_APPLIED, CB_DISMISS, CB_NOTE]
+_IDS = [0, 1, 7, 12345, 2_000_000_000]
+
+
+# ==================================================================================================
+# Codec — round-trip property over the full action × id matrix
+# ==================================================================================================
+@pytest.mark.parametrize("action,pid", list(itertools.product(_ACTIONS, _IDS)))
+def test_round_trip_is_lossless_for_every_action_and_id(action, pid):
+    """parse(build(a, id)) == (a, id) for the whole {fav,app,dis,note} × {boundary ids} grid."""
+    assert parse_callback_data(build_callback_data(action, pid)) == (action, pid)
+
+
+# ==================================================================================================
+# Codec — 64-byte length guard (Telegram rejects callback_data > 64 bytes)
+# ==================================================================================================
+@pytest.mark.parametrize("action", _ACTIONS)
+@pytest.mark.parametrize(
+    "pid",
+    [
+        0,
+        9_999_999_999,
+        2**63 - 1,  # max signed int64 — the largest an autoincrement PK can ever reach (19 digits)
+        10**30,  # absurdly larger than any reachable DB id, still trivially within budget
+    ],
+)
+def test_callback_data_stays_within_64_bytes(action, pid):
+    encoded = build_callback_data(action, pid).encode("utf-8")
+    assert len(encoded) <= 64, f"callback_data overflowed: {len(encoded)} bytes for id={pid}"
+
+
+def test_byte_budget_only_overflows_at_unreachable_id_widths():
+    """Document the actual cliff: ``pf:{action}:`` is 8 bytes for the longest action ("note"), so the
+    payload only exceeds 64 bytes once the id has 57+ decimal digits. A signed-int64 primary key tops
+    out at 19 digits, so no reachable project id can ever overflow — this is a hard invariant, not a
+    latent bug.
+    """
+    assert len(build_callback_data(CB_NOTE, 10**55).encode("utf-8")) == 64  # 56 digits: exactly full
+    assert len(build_callback_data(CB_NOTE, 10**56).encode("utf-8")) == 65  # 57 digits: over (unreachable)
+    # The widest reachable PK is comfortably inside the cap.
+    assert len(build_callback_data(CB_NOTE, 2**63 - 1).encode("utf-8")) < 64
+
+
+# ==================================================================================================
+# Codec — rejection of foreign / malformed payloads (returns None, never raises)
+# ==================================================================================================
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "",  # empty
+        "pf",  # bare prefix, one part
+        "pf:fav",  # two parts (missing id)
+        "pf:fav:1:2",  # four parts
+        "xx:fav:1",  # wrong prefix
+        "pf:bogus:1",  # unknown action
+        "pf:fav:abc",  # non-integer id
+        "pf::1",  # empty action token
+        "pf:fav:",  # empty id token
+        None,  # None input must be tolerated, not raise
+    ],
+)
+def test_parse_rejects_foreign_or_malformed_payloads(payload):
+    assert parse_callback_data(payload) is None
+
+
+def test_parse_rejects_whitespace_padded_action():
+    """A leading/trailing space makes the action token unknown (exact-membership match) → rejected."""
+    assert parse_callback_data("pf: fav:1") is None
+    assert parse_callback_data("pf:fav :1") is None
+
+
+def test_parse_accepts_int_with_surrounding_whitespace_is_documented():
+    """int(' 1') tolerates surrounding spaces, so ``pf:fav: 1`` parses to ('fav', 1). The action
+    token, however, is matched by exact membership, so ``pf: fav:1`` is rejected. This asymmetry is
+    harmless (callback_data is generated by us, never user-typed) but is pinned here so a future
+    refactor that tightens the id parse is a conscious choice."""
+    assert parse_callback_data("pf:fav: 1") == ("fav", 1)
+
+
+def test_negative_id_parses_through_and_is_harmless():
+    """``int('-1')`` succeeds, so ``pf:fav:-1`` decodes to ('fav', -1). Project ids are always
+    positive autoincrement PKs, so a negative id can never be produced by ``build_callback_data`` and
+    a downstream lookup on id=-1 simply finds nothing (a quiet no-op). Asserting CURRENT behaviour:
+    this is acceptable, not a defect — but documented so it can't change silently."""
+    assert parse_callback_data("pf:fav:-1") == (CB_FAVORITE, -1)
+    # And it still round-trips structurally with the builder were a negative ever fed in.
+    assert build_callback_data(CB_FAVORITE, -1) == f"{CALLBACK_PREFIX}:{CB_FAVORITE}:-1"
+
+
+def test_parse_is_total_never_raises_on_arbitrary_text():
+    """The bot feeds raw Telegram callback_data straight in; parse must be total (None, never throw)."""
+    for junk in ["::::", "pf:fav:1\n", "🙈:🙈:🙈", "pf:fav:0x10", "pf:fav:1.0", "pf:note:" + "9" * 200]:
+        assert parse_callback_data(junk) is None or isinstance(parse_callback_data(junk), tuple)
+
+
+# ==================================================================================================
+# build_project_keyboard — exact button ORDER + conditional Open row
+# ==================================================================================================
+def _project(pid: int = 777, url: str | None = "https://mostaql.com/project/777") -> Project:
+    # Real ORM class (kwargs only, no session); the builder reads .id / .url attributes directly.
+    return Project(id=pid, url=url)
+
+
+def test_keyboard_button_order_matches_documented_layout():
+    """[⭐ fav][✅ app] / [🙈 dis][📝 note] / [🔗 Open] — positions are contractual, not just the set."""
+    kb = build_project_keyboard(_project(pid=777))
+    grid = kb.inline_keyboard
+
+    assert len(grid) == 3  # two action rows + the Open row
+    assert [len(row) for row in grid] == [2, 2, 1]
+
+    # Row 0 / Row 1: the four callback buttons in the exact documented order.
+    assert grid[0][0].callback_data == build_callback_data(CB_FAVORITE, 777)
+    assert grid[0][1].callback_data == build_callback_data(CB_APPLIED, 777)
+    assert grid[1][0].callback_data == build_callback_data(CB_DISMISS, 777)
+    assert grid[1][1].callback_data == build_callback_data(CB_NOTE, 777)
+    # None of the action buttons is a URL button.
+    for row in grid[:2]:
+        for btn in row:
+            assert btn.url is None
+
+    # Row 2: the single Open button is a URL button carrying NO callback_data.
+    open_btn = grid[2][0]
+    assert open_btn.url == "https://mostaql.com/project/777"
+    assert open_btn.callback_data is None
+
+
+@pytest.mark.parametrize("url", [None, ""])
+def test_keyboard_omits_open_row_when_url_is_falsy(url):
+    """No reachable link → no Open row at all (only the two action rows, four callback buttons)."""
+    kb = build_project_keyboard(_project(url=url))
+    grid = kb.inline_keyboard
+    assert len(grid) == 2
+    buttons = [b for row in grid for b in row]
+    assert len(buttons) == 4
+    assert all(b.url is None for b in buttons)
+    assert all(b.callback_data is not None for b in buttons)
+
+
+def test_keyboard_callback_data_all_within_64_bytes_for_large_id():
+    kb = build_project_keyboard(_project(pid=2**63 - 1, url=None))
+    for row in kb.inline_keyboard:
+        for btn in row:
+            assert len(btn.callback_data.encode("utf-8")) <= 64
+
+
+# ==================================================================================================
+# Sender — reply_markup is forwarded ONLY when supplied
+# ==================================================================================================
+def _persist_pair(session, *, mostaql_id: str) -> tuple[Project, Client]:
+    now = utcnow()
+    client = Client(
+        mostaql_id=f"derived:{mostaql_id}",
+        name="عميل",
+        hiring_rate=75.0,
+        last_refreshed_at=now,
+        first_seen_at=now,
+        raw={},
+    )
+    session.add(client)
+    session.flush()
+    project = Project(
+        mostaql_id=mostaql_id,
+        title="تطوير موقع",
+        url=f"https://mostaql.com/project/{mostaql_id}",
+        category="برمجة",
+        budget_min=Decimal("300"),
+        budget_max=Decimal("500"),
+        currency="USD",
+        bids_count=3,
+        posted_at=now - timedelta(hours=1),
+        scraped_at=now,
+        tier=1,
+        notified=False,
+        client_id=client.id,
+        raw={},
+    )
+    session.add(project)
+    session.commit()
+    return project, client
+
+
+@pytest.mark.asyncio
+async def test_send_project_notification_forwards_reply_markup_when_given(db_session):
+    project, client = _persist_pair(db_session, mostaql_id="kbd-1")
+    sender = TelegramSender("test-token", "test-chat")
+    sender._send = AsyncMock()  # type: ignore[method-assign]
+    markup = build_project_keyboard(project)
+
+    ok = await sender.send_project_notification(
+        db_session, project, client, now_utc=utcnow(), owner_tz="Africa/Cairo", reply_markup=markup
+    )
+
+    assert ok is True
+    sender._send.assert_awaited_once()
+    call = sender._send.call_args
+    # The keyboard is passed as the reply_markup kwarg (identity-preserving), plus the message text.
+    assert call.kwargs.get("reply_markup") is markup
+    assert call.args[0]  # the rendered HTML text is the positional arg
+
+
+@pytest.mark.asyncio
+async def test_send_project_notification_omits_reply_markup_when_absent(db_session):
+    project, client = _persist_pair(db_session, mostaql_id="kbd-2")
+    sender = TelegramSender("test-token", "test-chat")
+    sender._send = AsyncMock()  # type: ignore[method-assign]
+
+    ok = await sender.send_project_notification(
+        db_session, project, client, now_utc=utcnow(), owner_tz="Africa/Cairo"
+    )
+
+    assert ok is True
+    sender._send.assert_awaited_once()
+    call = sender._send.call_args
+    # No reply_markup must be threaded through when none was supplied — keeps the plain-message surface.
+    assert "reply_markup" not in call.kwargs
+    assert call.args == (call.args[0],)  # text only, nothing else
+
+
+# --- _send-level: the ``extra`` dict only carries reply_markup when non-None --------------------
+class _KwargCapturingBot:
+    """A bot stub whose send_message records every kwarg so we can see exactly what _send forwarded."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def send_message(self, chat_id, text, parse_mode=None, **kwargs):
+        self.calls.append({"chat_id": chat_id, "text": text, "parse_mode": parse_mode, **kwargs})
+        return {"ok": True}
+
+    async def initialize(self):  # pragma: no cover - lifecycle, unused here
+        pass
+
+    async def shutdown(self):  # pragma: no cover - lifecycle, unused here
+        pass
+
+
+@pytest.mark.asyncio
+async def test_low_level_send_threads_reply_markup_through_to_bot():
+    bot = _KwargCapturingBot()
+    sender = TelegramSender("test-token", "test-chat")
+    sender._bot = bot  # type: ignore[assignment]
+    markup = build_project_keyboard(_project())
+
+    await sender._send("hello", reply_markup=markup)
+
+    assert len(bot.calls) == 1
+    assert bot.calls[0]["reply_markup"] is markup
+    assert bot.calls[0]["parse_mode"] == "HTML"
+
+
+@pytest.mark.asyncio
+async def test_low_level_send_omits_reply_markup_kwarg_when_none():
+    bot = _KwargCapturingBot()
+    sender = TelegramSender("test-token", "test-chat")
+    sender._bot = bot  # type: ignore[assignment]
+
+    await sender._send("hello")  # no reply_markup → key must be absent, not reply_markup=None
+
+    assert len(bot.calls) == 1
+    assert "reply_markup" not in bot.calls[0]
+    assert bot.calls[0]["text"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_low_level_send_explicit_none_is_also_omitted():
+    """Passing reply_markup=None explicitly behaves like passing nothing (the ``is not None`` gate)."""
+    bot = _KwargCapturingBot()
+    sender = TelegramSender("test-token", "test-chat")
+    sender._bot = bot  # type: ignore[assignment]
+
+    await sender._send("hello", reply_markup=None)
+
+    assert "reply_markup" not in bot.calls[0]

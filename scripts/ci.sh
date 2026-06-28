@@ -14,10 +14,10 @@ echo "==> install (editable, with api + dev extras)"
 echo "==> alembic upgrade head (fresh sqlite)"
 DATABASE_URL="sqlite:///./$SCRATCH" .venv/bin/alembic upgrade head
 
-echo "==> ruff (worker + api package + tests)"
+echo "==> ruff (worker + api + personal/storage/bot packages + tests)"
 .venv/bin/ruff check src tests
 
-echo "==> pytest (includes tests/api — dashboard contract + integration)"
+echo "==> pytest (worker + dashboard API + personal/board/attachments/control + bot + integration)"
 $PY -m pytest -q
 
 rm -f "$SCRATCH"

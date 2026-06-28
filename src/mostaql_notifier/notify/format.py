@@ -11,9 +11,60 @@ from datetime import datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
 from ..db.models import Client, Project
 
 _MAX_LEN = 4096
+
+# --- Inline action-button codec (Feature 3, research §4) -------------------------------------
+# Compact callback_data ``pf:{action}:{project_id}`` — well within Telegram's 64-byte limit (the DB
+# id is far shorter than the mostaql id). The bot (bot/callbacks.py) parses these; "Open" is a URL
+# button (no callback), so it carries no action.
+CALLBACK_PREFIX = "pf"
+CB_FAVORITE = "fav"
+CB_APPLIED = "app"
+CB_DISMISS = "dis"
+CB_NOTE = "note"
+_CALLBACK_ACTIONS = frozenset({CB_FAVORITE, CB_APPLIED, CB_DISMISS, CB_NOTE})
+
+
+def build_callback_data(action: str, project_id: int) -> str:
+    """Encode a callback action + project id as ``pf:{action}:{project_id}`` (≤ 64 bytes)."""
+    return f"{CALLBACK_PREFIX}:{action}:{project_id}"
+
+
+def parse_callback_data(data: str) -> tuple[str, int] | None:
+    """Decode ``pf:{action}:{project_id}`` → ``(action, project_id)``; None if it isn't ours."""
+    parts = (data or "").split(":")
+    if len(parts) != 3 or parts[0] != CALLBACK_PREFIX or parts[1] not in _CALLBACK_ACTIONS:
+        return None
+    try:
+        return parts[1], int(parts[2])
+    except ValueError:
+        return None
+
+
+def build_project_keyboard(project: Project) -> InlineKeyboardMarkup:
+    """The inline keyboard attached to each project notification (FR-024).
+
+    Layout (Arabic-first): [⭐ مفضّل] [✅ تقدّمت] / [🙈 إخفاء] [📝 ملاحظة] / [🔗 فتح على مستقل].
+    The first four are callback buttons; "Open" is a URL button to the project on Mostaql.
+    """
+    pid = project.id
+    rows = [
+        [
+            InlineKeyboardButton("⭐ مفضّل", callback_data=build_callback_data(CB_FAVORITE, pid)),
+            InlineKeyboardButton("✅ تقدّمت", callback_data=build_callback_data(CB_APPLIED, pid)),
+        ],
+        [
+            InlineKeyboardButton("🙈 إخفاء", callback_data=build_callback_data(CB_DISMISS, pid)),
+            InlineKeyboardButton("📝 ملاحظة", callback_data=build_callback_data(CB_NOTE, pid)),
+        ],
+    ]
+    if project.url:
+        rows.append([InlineKeyboardButton("🔗 فتح على مستقل", url=project.url)])
+    return InlineKeyboardMarkup(rows)
 
 
 def html_escape(text: object) -> str:

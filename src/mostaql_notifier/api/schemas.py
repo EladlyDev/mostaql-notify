@@ -38,6 +38,12 @@ class ProjectListItem(BaseModel):
     site_status: str
     eval_status: str
     qualified: bool
+    # Feature 3 — personal projection (defaulted when no personal record exists yet).
+    favorite: bool = False
+    personal_status: str = "new"
+    personal_status_label: str = ""
+    tags: list[str] = []
+    hidden: bool = False
 
 
 class ProjectListResponse(BaseModel):
@@ -71,6 +77,8 @@ class ProjectDetail(ProjectListItem):
     scraped_at: datetime | None = None
     client: ClientPanel | None = None
     same_client_projects: list[ProjectListItem] = []
+    # Feature 3 — the full personal record embedded for the detail/workspace view.
+    personal: PersonalRecord | None = None
 
 
 class HomeOverview(BaseModel):
@@ -81,6 +89,116 @@ class HomeOverview(BaseModel):
     last_successful_scrape: datetime | None = None
     latest_run_status: str | None = None
     health: str  # "green" | "red" | "unknown"
+    # Feature 3 — surface the intentional-idle state distinctly from a fault (constitution VI).
+    paused: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Feature 3 — personal pipeline & workspace DTOs (mirror contracts/openapi.yaml)
+# ---------------------------------------------------------------------------
+
+
+class PersonalRecord(BaseModel):
+    """The owner's personal layer for one project (response projection; built explicitly so
+    ``status_label`` can be resolved from config)."""
+
+    project_id: int
+    favorite: bool
+    status: str
+    status_label: str
+    tags: list[str]
+    applied_at: datetime | None = None
+    won_amount: float | None = None
+    lost_reason: str | None = None
+    notes: str
+    board_position: float
+    hidden: bool
+    status_changed_at: datetime | None = None
+    reminder_at: datetime | None = None  # reserved; inert this feature
+
+
+class PersonalUpdate(BaseModel):
+    """Partial create-or-update body. Any subset; the service applies the applied-once +
+    status_changed_at rules. ``model_fields_set`` distinguishes "omitted" from "explicit null"."""
+
+    favorite: bool | None = None
+    status: str | None = None
+    tags: list[str] | None = None
+    applied_at: datetime | None = None
+    won_amount: float | None = None
+    lost_reason: str | None = None
+    notes: str | None = None
+    hidden: bool | None = None
+    reminder_at: datetime | None = None
+
+
+class BoardCard(BaseModel):
+    project_id: int
+    title: str | None = None
+    url: str | None = None
+    client_hiring_rate: float | None = None
+    budget_min: float | None = None
+    budget_max: float | None = None
+    currency: str | None = None
+    tier: int | None = None
+    tier_label: str | None = None
+    bids_count: int | None = None
+    posted_at: datetime | None = None
+    tags: list[str] = []
+    status: str
+    board_position: float
+
+
+class BoardColumn(BaseModel):
+    key: str
+    label: str
+    cards: list[BoardCard] = []
+
+
+class BoardResponse(BaseModel):
+    columns: list[BoardColumn]
+
+
+class BoardMoveRequest(BaseModel):
+    project_id: int
+    to_status: str
+    position: float
+
+
+class AttachmentItem(BaseModel):
+    id: int
+    project_id: int
+    original_name: str
+    file_type: str  # "pdf" | "docx" | "md"
+    size_bytes: int
+    uploaded_at: datetime
+    can_preview: bool
+
+
+class AttachmentListResponse(BaseModel):
+    items: list[AttachmentItem]
+
+
+class AttachmentRename(BaseModel):
+    original_name: str
+
+
+class ControlState(BaseModel):
+    paused: bool
+
+
+class PersonalStatusOption(BaseModel):
+    """A configured pipeline stage (slug + Arabic label) for the feed/detail status pickers."""
+
+    key: str
+    label: str
+
+
+class UploadConfig(BaseModel):
+    """Config-driven upload limits, surfaced so the dropzone hint matches server enforcement."""
+
+    allowed_types: list[str]
+    max_bytes: int
 
 
 class SettingItem(BaseModel):
@@ -110,3 +228,7 @@ class ValidationErrorBody(BaseModel):
 
 class ErrorBody(BaseModel):
     detail: str
+
+
+# Resolve the forward reference ProjectDetail -> PersonalRecord now that both are defined.
+ProjectDetail.model_rebuild()

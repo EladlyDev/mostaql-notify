@@ -16,7 +16,14 @@ from mostaql_notifier.config import secrets as secrets_mod
 from mostaql_notifier.config.settings_store import seed_defaults
 from mostaql_notifier.db import models  # noqa: F401  (register tables)
 from mostaql_notifier.db import session as session_mod
-from mostaql_notifier.db.models import Client, Project, ProjectStatus, ScrapeRun
+from mostaql_notifier.db.models import (
+    Attachment,
+    Client,
+    PersonalRecord,
+    Project,
+    ProjectStatus,
+    ScrapeRun,
+)
 
 
 def _reset_engine_to(url: str) -> None:
@@ -36,6 +43,9 @@ def api_env(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
     # Pin CORS origin so tests are hermetic (independent of the developer's real .env).
     monkeypatch.setenv("FRONTEND_ORIGIN", "http://localhost:3000")
+    # Feature 3 — point uploads at a per-test temp dir so attachment tests never touch real ./data.
+    attach_dir = tmp_path / "attachments"
+    monkeypatch.setenv("ATTACHMENTS_DIR", str(attach_dir))
     monkeypatch.setenv("DASHBOARD_SESSION_SECRET", "test-session-secret")
     # default: auth disabled (overridden per client())
     monkeypatch.setenv("DASHBOARD_AUTH_ENABLED", "false")
@@ -50,6 +60,8 @@ def api_env(tmp_path, monkeypatch):
         seed_defaults(s)
 
     class Handle:
+        attachments_dir = attach_dir
+
         def session(self):
             return Session()
 
@@ -122,6 +134,45 @@ def make_project(session, **over) -> Project:
     session.add(p)
     session.flush()
     return p
+
+
+def make_personal_record(session, **over) -> PersonalRecord:
+    """A valid personal record. Pass ``project_id`` (or a ``project=`` to derive it)."""
+    project = over.pop("project", None)
+    defaults = dict(
+        project_id=project.id if project is not None else over.get("project_id"),
+        favorite=False,
+        status="new",
+        tags=[],
+        notes="",
+        board_position=0.0,
+        hidden=False,
+    )
+    defaults.update(over)
+    rec = PersonalRecord(**defaults)
+    session.add(rec)
+    session.flush()
+    return rec
+
+
+def make_attachment(session, **over) -> Attachment:
+    """A valid attachment row. Pass ``project_id`` (or ``project=``)."""
+    project = over.pop("project", None)
+    n = over.pop("_n", 1)
+    defaults = dict(
+        project_id=project.id if project is not None else over.get("project_id"),
+        original_name=f"ملف {n}.pdf",
+        stored_name=f"00000000-0000-0000-0000-00000000000{n}.pdf",
+        file_type="pdf",
+        content_type="application/pdf",
+        size_bytes=1234,
+        uploaded_at=_utc(),
+    )
+    defaults.update(over)
+    a = Attachment(**defaults)
+    session.add(a)
+    session.flush()
+    return a
 
 
 def make_scrape_run(session, **over) -> ScrapeRun:

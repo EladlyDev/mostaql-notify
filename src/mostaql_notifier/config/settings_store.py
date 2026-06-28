@@ -60,6 +60,22 @@ DEFAULTS: dict[str, tuple[object, str]] = {
     "heartbeat_hours": (12, "int"),
     "listing_url": ("https://mostaql.com/projects/development", "str"),
     "category_slug": ("development", "str"),
+    # personal pipeline & workspace (Feature 3) — all owner-facing tunables (constitution III)
+    "watcher_paused": (False, "bool"),  # /pause·/resume + dashboard toggle; worker skips its cycle when true
+    "personal_statuses": (
+        [
+            {"key": "new", "label": "جديد"},
+            {"key": "interested", "label": "مهتم"},
+            {"key": "applied", "label": "تقدّمت"},
+            {"key": "in_discussion", "label": "قيد النقاش"},
+            {"key": "won", "label": "ربح"},
+            {"key": "lost", "label": "خسارة"},
+            {"key": "ignored", "label": "تجاهل"},
+        ],
+        "json",
+    ),  # ordered [{key,label}]; first key is the default, "applied" triggers the applied-date rule
+    "upload_max_bytes": (10485760, "int"),  # 10 MB max per uploaded file
+    "upload_allowed_types": (["pdf", "docx", "md"], "json"),
 }
 
 

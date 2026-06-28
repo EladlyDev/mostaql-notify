@@ -1,0 +1,393 @@
+openapi: 3.1.0
+info:
+  title: Mostaql Notifier — Feature 3 (Personal Pipeline & Workspace) API
+  version: "1.0.0"
+  description: >
+    NEW and EXTENDED HTTP endpoints layered onto the Feature 2 dashboard API. All endpoints below sit behind
+    the existing single-owner auth gate (session cookie `mn_session`; bypassed when DASHBOARD_AUTH_ENABLED=false)
+    and are served from the same FastAPI app. Only the deltas vs. Feature 2 are documented here.
+
+    IMPORTANT (implementation note): this feature introduces PATCH and DELETE verbs, so the app's CORS
+    `allow_methods` MUST be extended from Feature 2's [GET, POST, PUT, OPTIONS] to also include PATCH and DELETE.
+
+    Constitution: every personal/board/attachment/control route is auth-gated (IX); no route triggers a scrape,
+    notification, or any write to mostaql.com (VIII); automation never deletes owner data — only these
+    owner-initiated endpoints do (IV).
+servers:
+  - url: http://localhost:8000
+    description: Local API (CORS limited to FRONTEND_ORIGIN)
+
+tags:
+  - name: personal
+  - name: board
+  - name: attachments
+  - name: control
+
+paths:
+  # ---------------------------------------------------------------------------
+  # EXTENDED — projects feed gains personal projection + filters
+  # ---------------------------------------------------------------------------
+  /api/projects:
+    get:
+      tags: [personal]
+      summary: List projects (Feature 2) — EXTENDED with personal projection and filters
+      description: >
+        Same as Feature 2 plus a LEFT JOIN on the personal record. Each item gains favorite/personal_status/
+        personal_status_label/tags/hidden (defaulted when no record exists). Three new filters added; hidden
+        projects are excluded unless include_hidden=true. All existing Feature 2 query params still apply.
+      parameters:
+        - { name: personal_status, in: query, required: false, schema: { type: string }, description: "Exact match on the personal status slug; no record counts as 'new'." }
+        - { name: favorites_only, in: query, required: false, schema: { type: boolean, default: false } }
+        - { name: include_hidden, in: query, required: false, schema: { type: boolean, default: false } }
+      responses:
+        "200":
+          description: Paginated projects with personal projection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectListResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ---------------------------------------------------------------------------
+  # Personal record (CRM core)
+  # ---------------------------------------------------------------------------
+  /api/projects/{project_id}/personal:
+    parameters:
+      - { name: project_id, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [personal]
+      summary: Get the personal record (returns defaults if none exists yet)
+      responses:
+        "200": { description: Personal record (or defaults), content: { application/json: { schema: { $ref: "#/components/schemas/PersonalRecord" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [personal]
+      summary: Create-or-update the personal record (partial). Lazily creates it on first touch.
+      description: >
+        Any subset of fields. Setting status to 'applied' records today's applied_at if unset (never overwrites).
+        A real status change stamps status_changed_at. status must be a configured slug; won_amount ≥ 0.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PersonalUpdate" }
+      responses:
+        "200": { description: Updated personal record, content: { application/json: { schema: { $ref: "#/components/schemas/PersonalRecord" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /api/projects/{project_id}/personal/favorite:
+    parameters:
+      - { name: project_id, in: path, required: true, schema: { type: integer } }
+    post:
+      tags: [personal]
+      summary: Toggle favorite (convenience for one-click feed action and Telegram parity)
+      responses:
+        "200": { description: Updated personal record, content: { application/json: { schema: { $ref: "#/components/schemas/PersonalRecord" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ---------------------------------------------------------------------------
+  # Kanban board
+  # ---------------------------------------------------------------------------
+  /api/board:
+    get:
+      tags: [board]
+      summary: The pipeline board — engaged, non-hidden projects grouped by status
+      description: "Columns in configured status order (including empty); a trailing fallback column holds any record whose status key was removed from config."
+      responses:
+        "200": { description: Board, content: { application/json: { schema: { $ref: "#/components/schemas/BoardResponse" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/board/move:
+    post:
+      tags: [board]
+      summary: Move/reorder a card (last-write-wins). Moving into 'applied' records the applied date.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BoardMoveRequest" }
+      responses:
+        "200": { description: The moved card, content: { application/json: { schema: { $ref: "#/components/schemas/BoardCard" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  # ---------------------------------------------------------------------------
+  # Attachments (workspace files)
+  # ---------------------------------------------------------------------------
+  /api/projects/{project_id}/attachments:
+    parameters:
+      - { name: project_id, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [attachments]
+      summary: List a project's attachments
+      responses:
+        "200": { description: Attachment list, content: { application/json: { schema: { $ref: "#/components/schemas/AttachmentListResponse" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [attachments]
+      summary: Upload a file (PDF/DOCX/MD). Validated by type + magic bytes + size; nothing stored on failure.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201": { description: Stored attachment, content: { application/json: { schema: { $ref: "#/components/schemas/AttachmentItem" } } } }
+        "400": { description: "Rejected (unsupported type / failed magic-byte check)", content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { description: "Too large (exceeds upload_max_bytes)", content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /api/attachments/{attachment_id}:
+    parameters:
+      - { name: attachment_id, in: path, required: true, schema: { type: integer } }
+    patch:
+      tags: [attachments]
+      summary: Rename an attachment (display name only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [original_name]
+              properties: { original_name: { type: string, minLength: 1 } }
+      responses:
+        "200": { description: Renamed, content: { application/json: { schema: { $ref: "#/components/schemas/AttachmentItem" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      tags: [attachments]
+      summary: Delete an attachment (owner-initiated; removes the row and the file)
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/attachments/{attachment_id}/download:
+    parameters:
+      - { name: attachment_id, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [attachments]
+      summary: Download the original file (Content-Disposition attachment; nosniff). DOCX/PDF.
+      responses:
+        "200":
+          description: File bytes
+          headers:
+            Content-Disposition: { schema: { type: string }, description: 'attachment; filename="..."' }
+            X-Content-Type-Options: { schema: { type: string }, description: nosniff }
+          content:
+            application/octet-stream: { schema: { type: string, format: binary } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/attachments/{attachment_id}/preview:
+    parameters:
+      - { name: attachment_id, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [attachments]
+      summary: Inline preview (PDF inline; Markdown as text/markdown). DOCX has no preview (download instead).
+      responses:
+        "200":
+          description: Inline file content
+          headers:
+            Content-Disposition: { schema: { type: string }, description: 'inline; filename="..."' }
+            X-Content-Type-Options: { schema: { type: string }, description: nosniff }
+          content:
+            application/pdf: { schema: { type: string, format: binary } }
+            text/markdown: { schema: { type: string } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "415": { description: "No inline preview for this type (e.g. DOCX)", content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+
+  # ---------------------------------------------------------------------------
+  # Watcher control (mirrors Telegram /pause /resume)
+  # ---------------------------------------------------------------------------
+  /api/control:
+    get:
+      tags: [control]
+      summary: Current control state (paused?)
+      responses:
+        "200": { description: Control state, content: { application/json: { schema: { $ref: "#/components/schemas/ControlState" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/control/pause:
+    post:
+      tags: [control]
+      summary: Pause the watcher's polling (idempotent)
+      responses:
+        "200": { description: Control state, content: { application/json: { schema: { $ref: "#/components/schemas/ControlState" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/control/resume:
+    post:
+      tags: [control]
+      summary: Resume the watcher's polling (idempotent)
+      responses:
+        "200": { description: Control state, content: { application/json: { schema: { $ref: "#/components/schemas/ControlState" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+components:
+  responses:
+    Unauthorized: { description: Not authenticated, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+    NotFound: { description: No such resource, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+    ValidationError: { description: Validation failed, content: { application/json: { schema: { $ref: "#/components/schemas/ValidationErrorBody" } } } }
+
+  schemas:
+    PersonalRecord:
+      type: object
+      required: [project_id, favorite, status, status_label, tags, notes, board_position, hidden]
+      properties:
+        project_id: { type: integer }
+        favorite: { type: boolean }
+        status: { type: string, description: "configured status slug" }
+        status_label: { type: string }
+        tags: { type: array, items: { type: string } }
+        applied_at: { type: [string, "null"], format: date-time }
+        won_amount: { type: [number, "null"] }
+        lost_reason: { type: [string, "null"] }
+        notes: { type: string }
+        board_position: { type: number }
+        hidden: { type: boolean }
+        status_changed_at: { type: [string, "null"], format: date-time }
+        reminder_at: { type: [string, "null"], format: date-time, description: "reserved; inert this feature" }
+
+    PersonalUpdate:
+      type: object
+      description: "Partial update; any subset. Server applies applied-once + status_changed_at rules."
+      properties:
+        favorite: { type: boolean }
+        status: { type: string }
+        tags: { type: array, items: { type: string } }
+        applied_at: { type: [string, "null"], format: date-time }
+        won_amount: { type: [number, "null"], minimum: 0 }
+        lost_reason: { type: [string, "null"] }
+        notes: { type: string }
+        hidden: { type: boolean }
+        reminder_at: { type: [string, "null"], format: date-time }
+
+    ProjectListItem:
+      type: object
+      description: "Feature 2 item EXTENDED with the personal projection (defaulted when no record exists)."
+      properties:
+        id: { type: integer }
+        title: { type: [string, "null"] }
+        url: { type: [string, "null"] }
+        client_name: { type: [string, "null"] }
+        client_hiring_rate: { type: [number, "null"] }
+        budget_min: { type: [number, "null"] }
+        budget_max: { type: [number, "null"] }
+        currency: { type: [string, "null"] }
+        tier: { type: [integer, "null"] }
+        tier_label: { type: [string, "null"] }
+        bids_count: { type: [integer, "null"] }
+        posted_at: { type: [string, "null"], format: date-time }
+        site_status: { type: string }
+        eval_status: { type: string }
+        qualified: { type: boolean }
+        favorite: { type: boolean }
+        personal_status: { type: string }
+        personal_status_label: { type: string }
+        tags: { type: array, items: { type: string } }
+        hidden: { type: boolean }
+
+    ProjectListResponse:
+      type: object
+      required: [items, total, page, page_size]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/ProjectListItem" } }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+
+    BoardCard:
+      type: object
+      required: [project_id, status, board_position]
+      properties:
+        project_id: { type: integer }
+        title: { type: [string, "null"] }
+        url: { type: [string, "null"] }
+        client_hiring_rate: { type: [number, "null"] }
+        budget_min: { type: [number, "null"] }
+        budget_max: { type: [number, "null"] }
+        currency: { type: [string, "null"] }
+        tier: { type: [integer, "null"] }
+        tier_label: { type: [string, "null"] }
+        bids_count: { type: [integer, "null"] }
+        posted_at: { type: [string, "null"], format: date-time }
+        tags: { type: array, items: { type: string } }
+        status: { type: string }
+        board_position: { type: number }
+
+    BoardColumn:
+      type: object
+      required: [key, label, cards]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        cards: { type: array, items: { $ref: "#/components/schemas/BoardCard" } }
+
+    BoardResponse:
+      type: object
+      required: [columns]
+      properties:
+        columns: { type: array, items: { $ref: "#/components/schemas/BoardColumn" } }
+
+    BoardMoveRequest:
+      type: object
+      required: [project_id, to_status, position]
+      properties:
+        project_id: { type: integer }
+        to_status: { type: string }
+        position: { type: number, description: "target order within the destination column (server normalizes)" }
+
+    AttachmentItem:
+      type: object
+      required: [id, project_id, original_name, file_type, size_bytes, uploaded_at, can_preview]
+      properties:
+        id: { type: integer }
+        project_id: { type: integer }
+        original_name: { type: string }
+        file_type: { type: string, enum: [pdf, docx, md] }
+        size_bytes: { type: integer }
+        uploaded_at: { type: string, format: date-time }
+        can_preview: { type: boolean }
+
+    AttachmentListResponse:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/AttachmentItem" } }
+
+    ControlState:
+      type: object
+      required: [paused]
+      properties:
+        paused: { type: boolean }
+
+    FieldError:
+      type: object
+      required: [key, message]
+      properties:
+        key: { type: string }
+        message: { type: string }
+    ValidationErrorBody:
+      type: object
+      required: [detail, errors]
+      properties:
+        detail: { type: string }
+        errors: { type: array, items: { $ref: "#/components/schemas/FieldError" } }
+    ErrorBody:
+      type: object
+      required: [detail]
+      properties:
+        detail: { type: string }

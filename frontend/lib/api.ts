@@ -1,9 +1,19 @@
 import type {
+  AttachmentItem,
+  AttachmentListResponse,
   AuthStatus,
+  BoardMoveRequest,
+  BoardCard,
+  BoardResponse,
+  ControlState,
   HomeOverview,
+  PersonalRecord,
+  PersonalStatusOption,
+  PersonalUpdate,
   ProjectDetail,
   ProjectListResponse,
   SettingsResponse,
+  UploadConfig,
 } from "@/lib/types";
 
 export const API_BASE =
@@ -62,7 +72,11 @@ export async function apiFetch<T>(
   const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
 
   const headers = new Headers(init?.headers);
-  if (init?.body != null && !headers.has("Content-Type")) {
+  // Don't force a JSON content-type for multipart uploads — the browser must set the multipart
+  // boundary itself (Feature 3 attachment uploads send FormData).
+  const isFormData =
+    typeof FormData !== "undefined" && init?.body instanceof FormData;
+  if (init?.body != null && !isFormData && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -158,4 +172,110 @@ export function updateSettings(
     method: "PUT",
     body: JSON.stringify(patch),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Feature 3 — personal pipeline & workspace
+// ---------------------------------------------------------------------------
+
+// Personal record (CRM core)
+export function getPersonal(projectId: number): Promise<PersonalRecord> {
+  return apiFetch<PersonalRecord>(`/api/projects/${projectId}/personal`);
+}
+
+export function updatePersonal(
+  projectId: number,
+  patch: PersonalUpdate
+): Promise<PersonalRecord> {
+  return apiFetch<PersonalRecord>(`/api/projects/${projectId}/personal`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function toggleFavorite(projectId: number): Promise<PersonalRecord> {
+  return apiFetch<PersonalRecord>(
+    `/api/projects/${projectId}/personal/favorite`,
+    { method: "POST" }
+  );
+}
+
+// Configured pipeline stages (slug + Arabic label) for the status pickers.
+export function getStatuses(): Promise<PersonalStatusOption[]> {
+  return apiFetch<PersonalStatusOption[]>("/api/statuses");
+}
+
+// Kanban board
+export function getBoard(): Promise<BoardResponse> {
+  return apiFetch<BoardResponse>("/api/board");
+}
+
+export function moveBoardCard(body: BoardMoveRequest): Promise<BoardCard> {
+  return apiFetch<BoardCard>("/api/board/move", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+// Attachments (workspace files)
+export function getUploadConfig(): Promise<UploadConfig> {
+  return apiFetch<UploadConfig>("/api/upload-config");
+}
+
+export function listAttachments(
+  projectId: number
+): Promise<AttachmentListResponse> {
+  return apiFetch<AttachmentListResponse>(
+    `/api/projects/${projectId}/attachments`
+  );
+}
+
+export function uploadAttachment(
+  projectId: number,
+  file: File
+): Promise<AttachmentItem> {
+  const form = new FormData();
+  form.append("file", file);
+  return apiFetch<AttachmentItem>(`/api/projects/${projectId}/attachments`, {
+    method: "POST",
+    body: form,
+  });
+}
+
+export function renameAttachment(
+  attachmentId: number,
+  originalName: string
+): Promise<AttachmentItem> {
+  return apiFetch<AttachmentItem>(`/api/attachments/${attachmentId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ original_name: originalName }),
+  });
+}
+
+export function deleteAttachment(attachmentId: number): Promise<null> {
+  return apiFetch<null>(`/api/attachments/${attachmentId}`, {
+    method: "DELETE",
+  });
+}
+
+// Absolute URLs for the gated download/preview streams (used in <a>/<iframe> src).
+export function attachmentDownloadUrl(attachmentId: number): string {
+  return `${API_BASE}/api/attachments/${attachmentId}/download`;
+}
+
+export function attachmentPreviewUrl(attachmentId: number): string {
+  return `${API_BASE}/api/attachments/${attachmentId}/preview`;
+}
+
+// Watcher control (mirrors Telegram /pause /resume)
+export function getControl(): Promise<ControlState> {
+  return apiFetch<ControlState>("/api/control");
+}
+
+export function pauseWatcher(): Promise<ControlState> {
+  return apiFetch<ControlState>("/api/control/pause", { method: "POST" });
+}
+
+export function resumeWatcher(): Promise<ControlState> {
+  return apiFetch<ControlState>("/api/control/resume", { method: "POST" });
 }
