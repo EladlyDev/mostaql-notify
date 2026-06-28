@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
-from .types import JSONType, UtcDateTime, make_enum
+from .types import JSONType, UtcDateTime, make_enum, utcnow
 
 
 class ProjectStatus(str, enum.Enum):
@@ -105,6 +105,13 @@ class Project(Base):
 
     client: Mapped[Client | None] = relationship(back_populates="projects")
     notifications: Mapped[list[NotificationLog]] = relationship(back_populates="project")
+    # Feature 3 — the owner's personal layer (1:1) + uploaded files (many). Non-cascading: a
+    # scraped project is never deleted by automation (constitution IV), so these are never orphaned
+    # by the watcher; only owner-initiated deletes remove personal data.
+    personal: Mapped[PersonalRecord | None] = relationship(
+        back_populates="project", uselist=False
+    )
+    attachments: Mapped[list[Attachment]] = relationship(back_populates="project")
 
     __table_args__ = (
         sa.Index("ix_projects_posted_at", "posted_at"),
@@ -112,6 +119,70 @@ class Project(Base):
         sa.Index("ix_projects_qualified_at", "qualified_at"),
         sa.Index("ix_projects_eval_status", "eval_status"),
     )
+
+
+class PersonalRecord(Base):
+    """The owner's personal layer for one project (Feature 3).
+
+    PK == FK (``project_id``) makes the 1:1 a structural guarantee — a second record for the same
+    project is impossible, so "one record, consistent across the dashboard and the bot" (FR-029,
+    SC-006) holds by construction. ``status`` is a config-driven slug (not a DB enum) so the owner
+    can relabel/reorder stages without a migration (constitution III).
+    """
+
+    __tablename__ = "personal_records"
+
+    project_id: Mapped[int] = mapped_column(
+        sa.ForeignKey("projects.id"), primary_key=True
+    )
+    favorite: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
+    status: Mapped[str] = mapped_column(sa.String, nullable=False, default="new")
+    tags: Mapped[list] = mapped_column(JSONType, nullable=False, default=list)
+    applied_at: Mapped[object | None] = mapped_column(UtcDateTime)  # set once on first →applied
+    won_amount: Mapped[object | None] = mapped_column(sa.Numeric)  # owner-entered, ≥ 0
+    lost_reason: Mapped[str | None] = mapped_column(sa.Text)
+    notes: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")  # markdown
+    board_position: Mapped[float] = mapped_column(sa.Float, nullable=False, default=0.0)
+    hidden: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
+    status_changed_at: Mapped[object | None] = mapped_column(UtcDateTime)
+    reminder_at: Mapped[object | None] = mapped_column(UtcDateTime)  # reserved; inert this feature
+    created_at: Mapped[object] = mapped_column(UtcDateTime, nullable=False, default=utcnow)
+    updated_at: Mapped[object] = mapped_column(
+        UtcDateTime, nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+    project: Mapped[Project] = relationship(back_populates="personal")
+
+    __table_args__ = (
+        sa.Index("ix_personal_records_status", "status"),
+        sa.Index("ix_personal_records_hidden", "hidden"),
+        sa.Index("ix_personal_records_favorite", "favorite"),
+    )
+
+
+class Attachment(Base):
+    """A file the owner uploaded for a project (Feature 3, many-per-project).
+
+    The bytes live on disk under ``attachments_dir/{project_id}/{stored_name}``; this row is the
+    metadata + the safe storage handle. ``stored_name`` is a server-generated ``{uuid}.{ext}`` so no
+    user input ever reaches a filesystem path (no traversal); ``original_name`` is retained verbatim
+    for display only (constitution IX).
+    """
+
+    __tablename__ = "attachments"
+
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(sa.ForeignKey("projects.id"), nullable=False)
+    original_name: Mapped[str] = mapped_column(sa.String, nullable=False)
+    stored_name: Mapped[str] = mapped_column(sa.String, nullable=False, unique=True)
+    file_type: Mapped[str] = mapped_column(sa.String, nullable=False)  # "pdf" | "docx" | "md"
+    content_type: Mapped[str] = mapped_column(sa.String, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    uploaded_at: Mapped[object] = mapped_column(UtcDateTime, nullable=False, default=utcnow)
+
+    project: Mapped[Project] = relationship(back_populates="attachments")
+
+    __table_args__ = (sa.Index("ix_attachments_project_id", "project_id"),)
 
 
 class ScrapeRun(Base):

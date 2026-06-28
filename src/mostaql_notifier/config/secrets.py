@@ -20,6 +20,12 @@ class Secrets(BaseSettings):
     dashboard_session_secret: str = ""
     frontend_origin: str = "http://localhost:3000"
 
+    # Feature 3 — where uploaded attachment bytes live on disk. A deployment path (like
+    # database_url), not a behaviour tunable, so it stays in env/secrets rather than the settings
+    # table. Default sits inside the backed-up ./data volume, outside any public web path
+    # (constitution IX/X). Files are streamed only via gated endpoints, never statically mounted.
+    attachments_dir: str = "./data/attachments"
+
 
 @lru_cache
 def get_secrets() -> Secrets:
