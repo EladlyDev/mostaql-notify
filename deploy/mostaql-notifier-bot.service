@@ -1,0 +1,21 @@
+# Sample systemd unit for the inbound Telegram bot (Feature 3) — sibling of the worker unit.
+# It long-polls Telegram (getUpdates) and acts on the same DB; outbound-only, binds no socket.
+# Install: copy to /etc/systemd/system/ (edit User/paths), then:
+#   systemctl daemon-reload && systemctl enable --now mostaql-notifier-bot
+[Unit]
+Description=Mostaql Notifier inbound bot (Telegram buttons + commands)
+After=network-online.target mostaql-notifier.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/code/mostaql-notify
+EnvironmentFile=/home/%i/code/mostaql-notify/.env
+ExecStart=/home/%i/code/mostaql-notify/.venv/bin/mostaql-notifier-bot
+Restart=always
+RestartSec=10
+# The bot makes only outbound connections (long-poll getUpdates); it binds no listening socket.
+
+[Install]
+WantedBy=multi-user.target

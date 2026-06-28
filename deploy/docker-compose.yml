@@ -26,6 +26,22 @@ services:
     command: sh -c "alembic upgrade head && mostaql-notifier"
     restart: unless-stopped
 
+  # Inbound Telegram bot (Feature 3): handles the notification action buttons + the
+  # /find /pause /resume /health /stats commands. Long-poll getUpdates only — no inbound
+  # port, no webhook (constitution IX). Shares the same ../data volume (DB + attachments)
+  # so it acts on the same single personal record as the dashboard.
+  bot:
+    build:
+      context: ..                 # repo root
+      dockerfile: deploy/Dockerfile.api   # reuse the API image (same package + deps)
+    env_file: ../.env
+    volumes:
+      - ../data:/app/data
+    command: mostaql-notifier-bot
+    depends_on:
+      - worker                    # worker brings the schema to head on the shared volume
+    restart: unless-stopped
+
   api:
     build:
       context: ..                 # repo root
