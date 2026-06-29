@@ -111,9 +111,14 @@ def wired(monkeypatch, tmp_path):
     Session = sessionmaker(bind=engine, future=True, expire_on_commit=False)
 
     poll_calls: list[tuple] = []
+    recheck_calls: list[tuple] = []
 
     async def _fake_poll(session, fetcher, sender, settings):
         poll_calls.append((fetcher, sender))
+        return _FakeRun()
+
+    async def _fake_recheck(session, fetcher, sender, settings):
+        recheck_calls.append((fetcher, sender))
         return _FakeRun()
 
     secrets = types.SimpleNamespace(
@@ -128,6 +133,7 @@ def wired(monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod, "TelegramSender", _FakeSender)
     monkeypatch.setattr(main_mod, "HttpxFetcher", lambda: fake_fetcher)
     monkeypatch.setattr(main_mod, "run_poll_cycle", _fake_poll)
+    monkeypatch.setattr(main_mod, "run_recheck_cycle", _fake_recheck)
     monkeypatch.setattr(main_mod, "AsyncIOScheduler", _FakeScheduler)
     # Only the Event that main() awaits is swapped (module-local asyncio shim); the real loop helper
     # is preserved so signal-handler registration + create_task keep working.
@@ -136,7 +142,9 @@ def wired(monkeypatch, tmp_path):
         "asyncio",
         types.SimpleNamespace(Event=_FakeEvent, get_running_loop=asyncio.get_running_loop),
     )
-    return types.SimpleNamespace(Session=Session, poll_calls=poll_calls, fetcher=fake_fetcher)
+    return types.SimpleNamespace(
+        Session=Session, poll_calls=poll_calls, recheck_calls=recheck_calls, fetcher=fake_fetcher
+    )
 
 
 # --------------------------------------------------------------------------- tests
@@ -149,7 +157,7 @@ async def test_main_runs_setup_and_graceful_shutdown(wired):
     assert sched is not None
     assert sched.started is True
     assert sched.shutdown_called is True            # graceful teardown ran (finally)
-    assert set(sched.jobs) == {"poll", "heartbeat"}  # both jobs registered
+    assert set(sched.jobs) == {"poll", "heartbeat", "recheck"}  # all three jobs registered
     assert sched.listener is not None                # fail-loud job-event listener attached
     assert wired.fetcher.closed is True              # fetcher closed on shutdown
 
@@ -173,6 +181,14 @@ async def test_poll_job_runs_a_cycle(wired):
 
     await poll_job()
     assert len(wired.poll_calls) == 1  # the scheduled job drives one run_poll_cycle
+
+
+async def test_recheck_job_runs_a_cycle(wired):
+    await main_mod.main()
+    recheck_job = _FakeScheduler.last.jobs["recheck"]
+
+    await recheck_job()
+    assert len(wired.recheck_calls) == 1  # the scheduled job drives one run_recheck_cycle
 
 
 async def test_heartbeat_job_emits_heartbeat_and_no_downtime_alert_when_fresh(wired, monkeypatch):
