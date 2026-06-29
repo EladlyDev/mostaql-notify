@@ -76,6 +76,26 @@ def set_applied(session: Session, project_id: int) -> PersonalRecord:
     return set_status(session, project_id, statuses.APPLIED_KEY)
 
 
+def revert_auto_status(session: Session, project_id: int) -> PersonalRecord:
+    """Undo the optional auto personal-status transition (Feature 4, R8 / data-model).
+
+    Restores the status the record held immediately before the automated change
+    (``auto_status_from``), re-stamps ``status_changed_at``, then clears the auto-trail
+    (``auto_status_from`` / ``auto_status_at``). Owner data — favorite/tags/notes/applied_at/
+    won_amount/lost_reason/attachments — is never touched. Raises
+    :class:`PersonalValidationError` (no row, or nothing to revert) when there is no recorded
+    auto-change to undo."""
+    rec = session.get(PersonalRecord, project_id)
+    if rec is None or rec.auto_status_from is None:
+        raise PersonalValidationError("auto_status", "لا يوجد تغيير تلقائي للتراجع عنه")
+    rec.status = rec.auto_status_from
+    rec.status_changed_at = utcnow()
+    rec.auto_status_from = None
+    rec.auto_status_at = None
+    session.flush()
+    return rec
+
+
 def _coerce_amount(value: object) -> Decimal:
     try:
         return Decimal(str(value))
