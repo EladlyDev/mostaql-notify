@@ -15,6 +15,7 @@ import { Bidi } from "@/components/Bidi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Card,
   CardContent,
@@ -55,6 +56,49 @@ const GROUPS: { id: string; title: string; description: string; keys: string[] }
       description: "معايير تأهيل العملاء.",
       keys: ["min_hiring_rate"],
     },
+    {
+      id: "scoring",
+      title: "التقييم",
+      description:
+        "أوزان ومعاملات احتساب درجة الفرصة، وحلقة إعادة الفحص، وعتبات الحداثة.",
+      keys: [
+        // Scoring weights (normalized at runtime — not required to sum to 1).
+        "score_weight_hiring_rate",
+        "score_weight_hire_volume",
+        "score_weight_budget",
+        "score_weight_competition",
+        "score_weight_freshness",
+        "score_weight_rating",
+        // Scoring tuning values.
+        "score_hiring_baseline",
+        "score_hiring_shrink_k",
+        "score_hire_volume_halfsat",
+        "score_budget_cap_usd",
+        "score_budget_tier2_scale",
+        "score_competition_halfsat_bids",
+        "score_competition_vel_cap",
+        "score_freshness_halflife_hours",
+        "score_rating_min_reviews",
+        // Re-check loop.
+        "recheck_interval_seconds",
+        "recheck_batch_size",
+        "recheck_min_interval_seconds",
+        "tracking_grace_hours",
+        // Freshness thresholds.
+        "freshness_green_max_bids",
+        "freshness_green_max_age_hours",
+        "freshness_red_min_bids",
+        "freshness_red_min_age_hours",
+        // Telegram.
+        "top_default_count",
+      ],
+    },
+    {
+      id: "automation",
+      title: "الأتمتة",
+      description: "مزامنة الحالة تلقائيًا من حلقة المتابعة.",
+      keys: ["auto_status_site_enabled", "auto_status_personal_enabled"],
+    },
   ];
 
 // Short Arabic helper/unit text keyed by setting key. Optional — absent keys
@@ -69,6 +113,37 @@ const HINTS: Record<string, string> = {
   fallback_buffer: "هامش إضافي فوق الهدف.",
   fallback_window_hours: "طول النافذة بالساعات.",
   min_hiring_rate: "نسبة مئوية بين ٠ و ١٠٠.",
+  // Scoring weights — relative أوزان (تُطبَّع تلقائيًا، لا يلزم أن يكون مجموعها ١).
+  score_weight_hiring_rate: "وزن نسبي — يُطبَّع تلقائيًا.",
+  score_weight_hire_volume: "وزن نسبي — يُطبَّع تلقائيًا.",
+  score_weight_budget: "وزن نسبي — يُطبَّع تلقائيًا.",
+  score_weight_competition: "وزن نسبي — يُطبَّع تلقائيًا.",
+  score_weight_freshness: "وزن نسبي — يُطبَّع تلقائيًا.",
+  score_weight_rating: "وزن نسبي — يُطبَّع تلقائيًا.",
+  // Scoring tuning.
+  score_hiring_baseline: "خط الأساس المحايد لنسبة التوظيف (٠–١٠٠).",
+  score_hiring_shrink_k: "قوة التنعيم (عدد افتراضي ≥ ٠).",
+  score_hire_volume_halfsat: "نقطة نصف التشبّع لعدد التوظيفات (≥ ١).",
+  score_budget_cap_usd: "سقف تناقص العائد بالدولار (≥ ١).",
+  score_budget_tier2_scale: "تخفيض ميزانية المستوى الثاني (٠–١).",
+  score_competition_halfsat_bids: "نصف التشبّع لازدحام العروض (≥ ١).",
+  score_competition_vel_cap: "سرعة العروض/الساعة عند درجة صفر (> ٠).",
+  score_freshness_halflife_hours: "نصف عمر تضاؤل الحداثة بالساعات (> ٠).",
+  score_rating_min_reviews: "عدد المراجعات للثقة الكاملة (≥ ١).",
+  // Re-check loop.
+  recheck_interval_seconds: "بالثواني — الحد الأدنى ٣٠٠.",
+  recheck_batch_size: "أقصى عدد مشاريع لكل دورة (≥ ١).",
+  recheck_min_interval_seconds: "أقل فاصل لإعادة فحص المشروع نفسه (≥ ٣٠٠ ثانية).",
+  tracking_grace_hours: "مدة المتابعة بعد الإغلاق بالساعات (≥ ٠).",
+  // Freshness thresholds.
+  freshness_green_max_bids: "أقصى عدد عروض لإشارة «حديث» الخضراء.",
+  freshness_green_max_age_hours: "أقصى عمر بالساعات لإشارة «حديث» الخضراء.",
+  freshness_red_min_bids: "أدنى عدد عروض لإشارة «قديم» الحمراء.",
+  freshness_red_min_age_hours: "أدنى عمر بالساعات لإشارة «قديم» الحمراء.",
+  // Telegram + toggles.
+  top_default_count: "عدد المشاريع الافتراضي لأمر /top (١–٢٠).",
+  auto_status_site_enabled: "مزامنة حالة مستقل تلقائيًا من حلقة المتابعة.",
+  auto_status_personal_enabled: "تحويل «مهتم» إلى «منتهي/فائت» تلقائيًا عند الإغلاق.",
 };
 
 type FieldErrors = Record<string, string>;
@@ -89,6 +164,8 @@ function step(type: SettingItem["type"]): string {
 
 /** Soft client-side validation for one field. Returns an Arabic message or null. */
 function validateField(item: SettingItem, raw: string): string | null {
+  // Boolean toggles are always valid ("true"/"false") — no numeric checks.
+  if (item.type === "bool") return null;
   const trimmed = raw.trim();
   if (trimmed === "") return "هذا الحقل مطلوب.";
   const n = Number(trimmed);
@@ -145,7 +222,10 @@ export function SettingsForm({
   const dirty = changedKeys.length > 0;
 
   const mutation = useMutation({
-    mutationFn: (patch: Record<string, number>) => updateSettings(patch),
+    mutationFn: (patch: Record<string, number | boolean>) =>
+      // `updateSettings` is typed numeric-only; booleans serialize to JSON
+      // booleans, which the registry accepts for `bool` keys.
+      updateSettings(patch as Record<string, number>),
     onSuccess: (next) => {
       setFieldErrors({});
       setGeneralError(null);
@@ -220,8 +300,14 @@ export function SettingsForm({
     }
     setFieldErrors({});
 
-    const patch: Record<string, number> = {};
-    for (const key of changedKeys) patch[key] = Number(values[key].trim());
+    const patch: Record<string, number | boolean> = {};
+    for (const key of changedKeys) {
+      const item = byKey.get(key);
+      patch[key] =
+        item?.type === "bool"
+          ? values[key] === "true"
+          : Number(values[key].trim());
+    }
     mutation.mutate(patch);
   }
 
@@ -323,6 +409,29 @@ function Field({
     [error ? `${id}-error` : null, hint ? `${id}-hint` : null]
       .filter(Boolean)
       .join(" ") || undefined;
+
+  // Boolean toggle → Switch instead of a number input.
+  if (item.type === "bool") {
+    return (
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between gap-3">
+          <Label htmlFor={id}>{item.label}</Label>
+          <Switch
+            id={id}
+            checked={value === "true"}
+            disabled={disabled}
+            aria-describedby={describedBy}
+            onCheckedChange={(checked) => onChange(checked ? "true" : "false")}
+          />
+        </div>
+        {hint && (
+          <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+            {hint}
+          </p>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-1.5">

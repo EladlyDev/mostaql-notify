@@ -21,8 +21,10 @@ from ..db.session import get_sessionmaker
 from ..db.types import utcnow
 from ..notify.format import build_heartbeat
 from ..notify.telegram import TelegramSender
+from ..scoring.service import rescore_all
 from ..scraper.httpx_fetcher import HttpxFetcher
 from ..worker.poll import run_poll_cycle
+from ..worker.recheck import run_recheck_cycle
 
 log = logging.getLogger("mostaql.worker")
 
@@ -41,7 +43,16 @@ async def main() -> None:
         poll_interval = settings.get_int("poll_interval_seconds")
         misfire = settings.get_int("misfire_grace_seconds")
         heartbeat_hours = settings.get_int("heartbeat_hours")
-    log.info("seeded %d settings; poll every %ss", seeded, poll_interval)
+        recheck_interval = settings.get_int("recheck_interval_seconds")
+        # T015 — one-time opportunity-scoring backfill so already-collected projects get a score
+        # (FR-005). Guarded by an app_state flag: runs once, then is a cheap no-op on every later boot.
+        if app_state_get(s, "scoring_backfilled") != "true":
+            scored = rescore_all(s, settings=settings, now_utc=utcnow())
+            s.commit()
+            app_state_set(s, "scoring_backfilled", "true")
+            log.info("scoring backfill: scored %d qualified project(s)", scored)
+    log.info("seeded %d settings; poll every %ss; re-check every %ss",
+             seeded, poll_interval, recheck_interval)
 
     sender = TelegramSender(secrets.telegram_bot_token, secrets.telegram_chat_id)
     await sender.start()
@@ -58,6 +69,17 @@ async def main() -> None:
                 return
             log.info("run %s: found=%s new=%s updated=%s errors=%s status=%s",
                      run.id, run.found_count, run.new_count, run.updated_count,
+                     run.error_count, run.status.value)
+
+    async def recheck_job() -> None:
+        with Session() as s:
+            settings = SettingsStore(s)
+            run = await run_recheck_cycle(s, fetcher, sender, settings)
+            if run is None:  # watcher intentionally paused — skipped quietly, no run row
+                log.info("recheck skipped: watcher paused")
+                return
+            log.info("recheck %s: found=%s checked=%s errors=%s status=%s",
+                     run.id, run.found_count, run.found_count - run.error_count,
                      run.error_count, run.status.value)
 
     async def heartbeat_job() -> None:
@@ -81,6 +103,8 @@ async def main() -> None:
                       coalesce=True, max_instances=1, misfire_grace_time=misfire)
     scheduler.add_job(heartbeat_job, IntervalTrigger(hours=heartbeat_hours), id="heartbeat",
                       coalesce=True, max_instances=1)
+    scheduler.add_job(recheck_job, IntervalTrigger(seconds=recheck_interval), id="recheck",
+                      coalesce=True, max_instances=1, misfire_grace_time=misfire)
 
     def on_job_event(event) -> None:  # fail-loud: APScheduler otherwise swallows job errors
         if event.exception:

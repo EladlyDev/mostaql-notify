@@ -74,8 +74,8 @@ def test_is_owner_unparsable_chat_id_is_false(monkeypatch, clear_secrets_cache):
 # ================================================================================================
 
 def test_build_application_registers_expected_handlers():
-    """The built ``Application`` carries exactly one ``CallbackQueryHandler``, five ``CommandHandler``
-    (find/pause/resume/health/stats), and one ``MessageHandler``."""
+    """The built ``Application`` carries exactly one ``CallbackQueryHandler``, six ``CommandHandler``
+    (find/pause/resume/health/stats + Feature-4 top), and one ``MessageHandler``."""
     from telegram.ext import (
         Application,
         CallbackQueryHandler,
@@ -95,9 +95,9 @@ def test_build_application_registers_expected_handlers():
     assert sum(isinstance(h, MessageHandler) for h in flat) == 1
 
     command_handlers = [h for h in flat if isinstance(h, CommandHandler)]
-    assert len(command_handlers) == 5
+    assert len(command_handlers) == 6
     registered = set().union(*(h.commands for h in command_handlers))
-    assert registered == {"find", "pause", "resume", "health", "stats"}
+    assert registered == {"find", "pause", "resume", "health", "stats", "top"}
 
 
 # ================================================================================================

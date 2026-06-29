@@ -2,10 +2,15 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, FileSearch } from "lucide-react";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { ArrowUpRight, FileSearch, RotateCcw } from "lucide-react";
 
-import { ApiError, getProject } from "@/lib/api";
+import { ApiError, getProject, revertAutoStatus } from "@/lib/api";
+import { useLifecycle } from "@/lib/useLifecycle";
 import type { ProjectDetail, ProjectListItem } from "@/lib/types";
 import {
   formatAbsolute,
@@ -17,10 +22,16 @@ import { Bidi } from "@/components/Bidi";
 import { ClientPanel } from "@/components/ClientPanel";
 import { PersonalPanel } from "@/components/personal/PersonalPanel";
 import { WorkspacePanel } from "@/components/workspace/WorkspacePanel";
+import { FreshnessBadge } from "@/components/score/FreshnessBadge";
+import { OutcomeBadge } from "@/components/score/OutcomeBadge";
+import { ScoreBars } from "@/components/score/ScoreBars";
+import { BidChart } from "@/components/lifecycle/BidChart";
+import { StatusTimeline } from "@/components/lifecycle/StatusTimeline";
 import { EmptyState } from "@/components/states/EmptyState";
 import { ErrorState } from "@/components/states/ErrorState";
 import { Loading } from "@/components/states/Loading";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -59,6 +70,112 @@ function RelatedProjectRow({ project }: { project: ProjectListItem }) {
   );
 }
 
+const scoreFmt = new Intl.NumberFormat("ar-EG", { maximumFractionDigits: 0 });
+
+/**
+ * Undo a watcher-applied automatic status change (FR-031). Shown only when the
+ * personal record carries an `auto_status_at` stamp; POSTs the revert and
+ * refreshes the detail / personal / feed caches on success.
+ */
+function AutoStatusRevert({ projectId }: { projectId: number }) {
+  const qc = useQueryClient();
+  const revert = useMutation({
+    mutationFn: () => revertAutoStatus(projectId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["project", projectId] });
+      qc.invalidateQueries({ queryKey: ["personal", projectId] });
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["board"] });
+    },
+  });
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() => revert.mutate()}
+      disabled={revert.isPending}
+    >
+      <RotateCcw aria-hidden />
+      تراجع عن التغيير التلقائي
+    </Button>
+  );
+}
+
+/** Opportunity score headline + the explainable per-component breakdown. */
+function ScoreCard({ data }: { data: ProjectDetail }) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardTitle>نقاط الفرصة</CardTitle>
+          {data.score !== null && data.score !== undefined && (
+            <span className="text-2xl font-semibold tabular-nums">
+              <Bidi>{scoreFmt.format(data.score)}</Bidi>
+              <span className="text-sm font-normal text-muted-foreground">
+                {" "}
+                / ١٠٠
+              </span>
+            </span>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {data.score_breakdown ? (
+          <ScoreBars breakdown={data.score_breakdown} />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            لم يُحتسب لهذا المشروع نقاط بعد.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Bid trajectory + status timeline + outcome (GET /lifecycle). */
+function LifecycleCard({ projectId }: { projectId: number }) {
+  const { data, isPending, error, refetch } = useLifecycle(projectId);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardTitle>المسار الزمني</CardTitle>
+          {data?.outcome && <OutcomeBadge outcome={data.outcome} />}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isPending ? (
+          <Loading rows={3} />
+        ) : error ? (
+          <ErrorState
+            title="تعذّر تحميل المسار الزمني"
+            onRetry={() => {
+              void refetch();
+            }}
+          />
+        ) : (
+          <div className="flex flex-col gap-6">
+            <section className="flex flex-col gap-2">
+              <h3 className="text-sm font-medium text-muted-foreground">
+                مسار العروض
+              </h3>
+              <BidChart snapshots={data.snapshots} />
+            </section>
+            <section className="flex flex-col gap-2">
+              <h3 className="text-sm font-medium text-muted-foreground">
+                تغيّرات الحالة
+              </h3>
+              <StatusTimeline events={data.status_timeline} />
+            </section>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ProjectDetailView({ data }: { data: ProjectDetail }) {
   return (
     <div className="flex flex-col gap-6">
@@ -75,6 +192,8 @@ function ProjectDetailView({ data }: { data: ProjectDetail }) {
           {data.site_status && (
             <Badge variant="outline">{data.site_status}</Badge>
           )}
+          <FreshnessBadge freshness={data.freshness} />
+          <OutcomeBadge outcome={data.outcome} />
         </div>
         {data.url && (
           <a
@@ -91,8 +210,26 @@ function ProjectDetailView({ data }: { data: ProjectDetail }) {
 
       {/* Personal CRM controls (Feature 3, US1) */}
       {data.personal && (
-        <PersonalPanel key={data.id} projectId={data.id} personal={data.personal} />
+        <div className="flex flex-col gap-2">
+          <PersonalPanel
+            key={data.id}
+            projectId={data.id}
+            personal={data.personal}
+          />
+          {/* Undo an automatic (watcher-applied) status change — Feature 4 FR-031. */}
+          {data.personal.auto_status_at && (
+            <div className="flex justify-end">
+              <AutoStatusRevert projectId={data.id} />
+            </div>
+          )}
+        </div>
       )}
+
+      {/* Opportunity score + explainable breakdown (Feature 4, US1) */}
+      <ScoreCard data={data} />
+
+      {/* Lifecycle: bid trajectory, status timeline, outcome (Feature 4, US2) */}
+      <LifecycleCard projectId={data.id} />
 
       {/* Meta row */}
       <Card>

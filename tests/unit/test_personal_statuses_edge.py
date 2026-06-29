@@ -25,13 +25,15 @@ def _set_statuses(session, value) -> None:
 def test_default_is_first_entry_and_order_preserved(db_session, settings):
     assert statuses.default_status(db_session) == "new"
     assert [s["key"] for s in statuses.list_statuses(db_session)] == [
-        "new", "interested", "applied", "in_discussion", "won", "lost", "ignored"
+        "new", "interested", "applied", "in_discussion", "won", "lost", "expired_missed", "ignored"
     ]
 
 
 def test_valid_keys_and_is_valid(db_session, settings):
     keys = statuses.valid_keys(db_session)
-    assert keys == {"new", "interested", "applied", "in_discussion", "won", "lost", "ignored"}
+    assert keys == {
+        "new", "interested", "applied", "in_discussion", "won", "lost", "expired_missed", "ignored"
+    }
     assert statuses.is_valid(db_session, "applied") is True
     assert statuses.is_valid(db_session, "nope") is False
 

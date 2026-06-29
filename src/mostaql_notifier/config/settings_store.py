@@ -70,12 +70,47 @@ DEFAULTS: dict[str, tuple[object, str]] = {
             {"key": "in_discussion", "label": "قيد النقاش"},
             {"key": "won", "label": "ربح"},
             {"key": "lost", "label": "خسارة"},
+            {"key": "expired_missed", "label": "منتهي/فائت"},  # Feature 4 auto-transition target
             {"key": "ignored", "label": "تجاهل"},
         ],
         "json",
     ),  # ordered [{key,label}]; first key is the default, "applied" triggers the applied-date rule
     "upload_max_bytes": (10485760, "int"),  # 10 MB max per uploaded file
     "upload_allowed_types": (["pdf", "docx", "md"], "json"),
+    # opportunity scoring (Feature 4) — every value tunable at runtime (constitution III)
+    # six component weights (0–1 each; NORMALIZED at runtime, never rejected for sum≠1 — FR-009)
+    "score_weight_hiring_rate": (0.35, "float"),
+    "score_weight_hire_volume": (0.15, "float"),
+    "score_weight_budget": (0.15, "float"),
+    "score_weight_competition": (0.20, "float"),
+    "score_weight_freshness": (0.10, "float"),
+    "score_weight_rating": (0.05, "float"),
+    # scoring tuning values
+    "score_hiring_baseline": (50.0, "float"),       # neutral hiring-rate baseline for shrinkage
+    "score_hiring_shrink_k": (5, "int"),            # pseudo-count (shrinkage strength)
+    "score_hire_volume_halfsat": (10, "int"),       # half-saturation for hire count
+    "score_budget_cap_usd": (1000, "int"),          # diminishing-returns cap (USD)
+    "score_budget_tier2_scale": (0.6, "float"),     # Tier-2 budget down-scale
+    "score_competition_halfsat_bids": (15, "int"),  # half-saturation for bid crowdedness
+    "score_competition_vel_cap": (3.0, "float"),    # bids/hour at which velocity sub-score = 0
+    "score_freshness_halflife_hours": (12.0, "float"),  # freshness decay half-life
+    "score_rating_min_reviews": (3, "int"),         # reviews for full rating confidence
+    # re-check loop (independent of the fast poll)
+    "recheck_interval_seconds": (1800, "int"),      # re-check job cadence
+    "recheck_batch_size": (20, "int"),              # max projects re-checked per cycle
+    "recheck_min_interval_seconds": (1500, "int"),  # never re-check one project more often than this
+    "tracking_grace_hours": (72, "int"),            # keep re-checking this long after close, then stop
+    # freshness "still good?" signal thresholds
+    "freshness_green_max_bids": (8, "int"),
+    "freshness_green_max_age_hours": (12, "int"),
+    "freshness_red_min_bids": (20, "int"),
+    "freshness_red_min_age_hours": (48, "int"),
+    # Telegram + auto-status toggles
+    "top_default_count": (5, "int"),                # /top default N
+    "auto_status_site_enabled": (True, "bool"),     # auto-sync Mostaql status from the loop
+    "auto_status_personal_enabled": (False, "bool"),  # optional Interested→Expired/Missed
+    # scraper marker — DOM/text markers for an awarded project (confined to scraper/mostaql.py)
+    "awarded_markers": (["label-prj-awarded", "تم الترسية", "مسند"], "json"),
 }
 
 

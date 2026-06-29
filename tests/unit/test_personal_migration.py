@@ -98,18 +98,21 @@ def test_downgrade_then_upgrade_round_trips(tmp_path, monkeypatch, isolate_globa
     from alembic import command
     from mostaql_notifier.db import migrate as migrate_mod
 
-    migrate_mod.upgrade_head()
+    # Scope to the Feature-3 revision specifically: `upgrade_head` now targets the later Feature-4
+    # head, so we upgrade to `_HEAD` explicitly to keep this a focused Feature-3 round-trip.
+    cfg = migrate_mod._alembic_cfg()
+    command.upgrade(cfg, _HEAD)
     assert _NEW_TABLES <= _tables(url)
     assert _version(url) == _HEAD
 
     # Downgrade exactly the Feature 3 revision.
-    command.downgrade(migrate_mod._alembic_cfg(), _INITIAL)
+    command.downgrade(cfg, _INITIAL)
     after_down = _tables(url)
     assert not (_NEW_TABLES & after_down), "downgrade must drop the Feature 3 tables"
     assert "projects" in after_down  # base schema is untouched
     assert _version(url) == _INITIAL
 
     # Re-upgrade restores them (a clean, reversible migration).
-    migrate_mod.upgrade_head()
+    command.upgrade(cfg, _HEAD)
     assert _NEW_TABLES <= _tables(url)
     assert _version(url) == _HEAD

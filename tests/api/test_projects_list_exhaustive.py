@@ -679,6 +679,8 @@ EXPECTED_KEYS = {
     "site_status", "eval_status", "qualified",
     # Feature 3 — personal projection (defaulted when no record exists).
     "favorite", "personal_status", "personal_status_label", "tags", "hidden",
+    # Feature 4 — opportunity score + freshness signal (null for unscored projects).
+    "score", "freshness",
 }
 
 

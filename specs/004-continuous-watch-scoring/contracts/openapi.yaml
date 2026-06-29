@@ -1,0 +1,424 @@
+openapi: 3.0.3
+info:
+  title: Mostaql Notifier — Feature 4 API (deltas)
+  version: "0.4.0"
+  description: >
+    NEW and EXTENDED HTTP endpoints layered onto the Feature 2/3 dashboard API for the opportunity
+    score, the watch-over-time loop, the freshness signal, and the scoring settings. Only the deltas
+    vs. Features 2/3 are documented here; everything else on these endpoints is unchanged.
+
+    AUTH: every endpoint below sits behind the existing single-owner auth gate (signed session cookie
+    `mn_session`; bypassed only when DASHBOARD_AUTH_ENABLED=false). An unauthenticated request returns
+    401 with the standard ErrorBody. No new public surface is added (constitution IX).
+
+    Constitution: these are read-only projections plus a settings tune — no route triggers a scrape,
+    a notification, or any write to mostaql.com (VIII); the re-check loop that produces this data
+    appends snapshots and refreshes the derived latest score, but never deletes or overwrites owner
+    data (IV). Only qualified projects carry a score; unscored / non-qualified projects sort last and
+    are excluded from the score range filter's matches (VII, FR-011).
+servers:
+  - url: http://localhost:8000
+    description: Local API (CORS limited to FRONTEND_ORIGIN)
+
+tags:
+  - name: projects
+  - name: lifecycle
+  - name: settings
+
+security:
+  - cookieAuth: []
+
+paths:
+  # ---------------------------------------------------------------------------
+  # EXTENDED — projects feed gains score column + score sort + score-range filter
+  # ---------------------------------------------------------------------------
+  /api/projects:
+    get:
+      tags: [projects]
+      summary: List projects (Features 2/3) — EXTENDED with score sort + score-range filter
+      description: >
+        Same as Features 2/3 plus a LEFT JOIN on `project_scores`. Each item gains `score`
+        (number|null) and `freshness` (green|yellow|red|null). Two new ADDITIVE filters
+        (`score_min`, `score_max`) and one new `sort` enum value (`score`) are added; all existing
+        Feature 2/3 query params (tier, budget_min/max, min_hiring_rate, bids_min/max,
+        posted_within_hours, site_status, qualified_only, q, personal_status, favorites_only,
+        include_hidden, order, page, page_size) still apply and AND-combine. Unscored / non-qualified
+        projects have a null `score`/`freshness` and ALWAYS sort last (NULLS LAST) regardless of order.
+      parameters:
+        - name: score_min
+          in: query
+          required: false
+          schema: { type: number, minimum: 0, maximum: 100 }
+          description: "Lower bound (inclusive) of the opportunity score; null-scored projects are excluded from the match."
+        - name: score_max
+          in: query
+          required: false
+          schema: { type: number, minimum: 0, maximum: 100 }
+          description: "Upper bound (inclusive) of the opportunity score; null-scored projects are excluded from the match."
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            default: posted_at
+            enum: [posted_at, budget, bids_count, hiring_rate, score]
+          description: >
+            Existing keys are unchanged; `score` (NEW) orders by the latest opportunity score.
+            Unscored / non-qualified projects sort last for every key value.
+      responses:
+        "200":
+          description: Paginated projects (each item carrying score + freshness)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectListResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ---------------------------------------------------------------------------
+  # EXTENDED — project detail gains score, freshness, outcome, and breakdown
+  # ---------------------------------------------------------------------------
+  /api/projects/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [projects]
+      summary: Project detail (Features 2/3) — EXTENDED with score, freshness, outcome, breakdown
+      description: >
+        Same as Features 2/3 plus the Feature 4 scoring projection: `score` and `freshness`
+        (inherited from the list item), `outcome` (open|closed_no_hire|hired|unknown|null), and the
+        stored `score_breakdown` (ScoreBreakdown|null) used to render the per-component bars beside
+        the active weights. All are null for a project that has never been scored (non-qualified).
+      responses:
+        "200":
+          description: Project detail with the scoring projection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ---------------------------------------------------------------------------
+  # NEW — per-project lifecycle (bid trajectory, status timeline, outcome)
+  # ---------------------------------------------------------------------------
+  /api/projects/{id}/lifecycle:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [lifecycle]
+      summary: The project's lifecycle — append-only snapshots, status timeline, and final outcome
+      description: >
+        Reads the project's `project_snapshots` trajectory (time-ordered, append-only) plus its
+        `outcome`. `snapshots` powers the inline bid-over-time chart; `status_timeline` is the
+        deduped series of site-status changes (one event per transition) derived from the snapshots;
+        `outcome` is the fail-closed disposition. A project with no snapshots yet returns an empty
+        trajectory and timeline (and whatever outcome is stored, defaulting to `open`). All
+        timestamps are UTC (displayed in the owner timezone by the client).
+      responses:
+        "200":
+          description: The project's lifecycle
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Lifecycle" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ---------------------------------------------------------------------------
+  # EXTENDED — settings now include the scoring/loop/freshness/top/toggle keys
+  # ---------------------------------------------------------------------------
+  /api/settings:
+    get:
+      tags: [settings]
+      summary: Read the editable settings — EXTENDED with the Feature 4 scoring/loop/freshness keys
+      description: >
+        Same shape as Features 2/3 (registry display order) but the registry now also exposes the
+        Feature 4 tunables, and `SettingItem` gains a `"bool"` type (boolean `value`) alongside
+        `"int"` / `"float"`.
+
+        New keys (defaults in parentheses; all read at runtime — config over code, FR-008/FR-033):
+        SCORING WEIGHTS (float, 0–1 each, normalized at runtime): `score_weight_hiring_rate` (0.35),
+        `score_weight_hire_volume` (0.15), `score_weight_budget` (0.15), `score_weight_competition`
+        (0.20), `score_weight_freshness` (0.10), `score_weight_rating` (0.05).
+        SCORING TUNING: `score_hiring_baseline` (50.0, 0–100), `score_hiring_shrink_k` (5, ≥0),
+        `score_hire_volume_halfsat` (10, ≥1), `score_budget_cap_usd` (1000, ≥1),
+        `score_budget_tier2_scale` (0.6, 0–1), `score_competition_halfsat_bids` (15, ≥1),
+        `score_competition_vel_cap` (3.0, >0), `score_freshness_halflife_hours` (12.0, >0),
+        `score_rating_min_reviews` (3, ≥1).
+        RE-CHECK LOOP: `recheck_interval_seconds` (1800, ≥300), `recheck_batch_size` (20, ≥1),
+        `recheck_min_interval_seconds` (1500, ≥300), `tracking_grace_hours` (72, ≥0).
+        FRESHNESS THRESHOLDS: `freshness_green_max_bids` (8, ≥0), `freshness_green_max_age_hours`
+        (12, ≥0), `freshness_red_min_bids` (20, ≥1), `freshness_red_min_age_hours` (48, ≥1).
+        TELEGRAM + TOGGLES: `top_default_count` (5, 1–20), `auto_status_site_enabled` (bool, true),
+        `auto_status_personal_enabled` (bool, false).
+      responses:
+        "200":
+          description: The editable settings with their current values (includes the Feature 4 keys)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SettingsResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [settings]
+      summary: Validate and persist a partial settings update (all-or-nothing) — EXTENDED
+      description: >
+        Partial map of {key: value}; validated against the registry and persisted all-or-nothing
+        (unknown keys, type mismatches, and out-of-range values are refused before any write).
+
+        Weight validation (FR-009): each `score_weight_*` is accepted as ANY non-negative float — the
+        validator does NOT require the six weights to sum to 1; they are normalized to sum to one at
+        runtime (and fall back to equal weights if all are zero). Only negatives / NaN are rejected.
+        Bool toggles (`auto_status_*`) accept a JSON boolean.
+
+        Re-score trigger (SC-006): when this PUT changes any scoring weight or tuning value, the
+        server synchronously re-scores all qualified projects from stored data (a pure, sub-second,
+        no-I/O pass) before responding, so the feed reflects the change on its next refresh.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SettingsUpdate" }
+      responses:
+        "200":
+          description: The full settings set after the update
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SettingsResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: mn_session
+      description: "Signed single-owner session cookie set by POST /api/auth/login (existing)."
+
+  responses:
+    Unauthorized: { description: Not authenticated, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+    NotFound: { description: No such resource, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorBody" } } } }
+    ValidationError: { description: Validation failed, content: { application/json: { schema: { $ref: "#/components/schemas/ValidationErrorBody" } } } }
+
+  schemas:
+    # -------------------------------------------------------------------------
+    # Projects feed + detail (deltas)
+    # -------------------------------------------------------------------------
+    ProjectListItem:
+      type: object
+      description: >
+        Feature 2/3 item EXTENDED with the Feature 4 scoring projection. Only the two new fields
+        (`score`, `freshness`) are described in full here; all prior Feature 2/3 fields are unchanged
+        and still present.
+      properties:
+        id: { type: integer }
+        title: { type: string, nullable: true }
+        url: { type: string, nullable: true }
+        client_name: { type: string, nullable: true }
+        client_hiring_rate: { type: number, nullable: true }
+        budget_min: { type: number, nullable: true }
+        budget_max: { type: number, nullable: true }
+        currency: { type: string, nullable: true }
+        tier: { type: integer, nullable: true }
+        tier_label: { type: string, nullable: true }
+        bids_count: { type: integer, nullable: true }
+        posted_at: { type: string, format: date-time, nullable: true }
+        site_status: { type: string, enum: [open, closed, awarded, unknown] }
+        eval_status: { type: string }
+        qualified: { type: boolean }
+        favorite: { type: boolean }
+        personal_status: { type: string }
+        personal_status_label: { type: string }
+        tags: { type: array, items: { type: string } }
+        hidden: { type: boolean }
+        # Feature 4 additions:
+        score:
+          type: number
+          minimum: 0
+          maximum: 100
+          nullable: true
+          description: "Latest 0–100 opportunity score; null for an unscored / non-qualified project."
+        freshness:
+          type: string
+          nullable: true
+          enum: [green, yellow, red, null]
+          description: "Derived 'still good?' signal; null when no scoring/trajectory exists yet."
+
+    ProjectListResponse:
+      type: object
+      required: [items, total, page, page_size]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/ProjectListItem" } }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+
+    ProjectDetail:
+      description: >
+        Feature 2/3 detail (client side-panel, sibling projects, embedded personal record — unchanged
+        and not repeated here) EXTENDED. It already carries `score` and `freshness` via the list item;
+        Feature 4 additionally adds `outcome` and the stored `score_breakdown`.
+      allOf:
+        - $ref: "#/components/schemas/ProjectListItem"
+        - type: object
+          properties:
+            outcome:
+              type: string
+              nullable: true
+              enum: [open, closed_no_hire, hired, unknown, null]
+              description: "Fail-closed final disposition; null until the project is first scored/tracked."
+            score_breakdown:
+              nullable: true
+              allOf: [ { $ref: "#/components/schemas/ScoreBreakdown" } ]
+              description: "The stored per-component breakdown behind `score`; null when never scored."
+
+    # -------------------------------------------------------------------------
+    # Score breakdown
+    # -------------------------------------------------------------------------
+    ScoreComponent:
+      type: object
+      required: [key, label, sub_score, weight, contribution]
+      description: "One weighted component of the opportunity score (renders as one bar)."
+      properties:
+        key: { type: string, description: "Stable component id (e.g. hiring_rate, hire_volume, budget, competition, freshness, rating)." }
+        label: { type: string, description: "Arabic display label." }
+        raw:
+          type: number
+          nullable: true
+          description: "The component's primary raw input (e.g. hiring rate %, bid count); null when the input is unknown."
+        sub_score:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: "Normalized component score in [0, 1]."
+        weight:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: "This component's normalized weight (the six weights sum to 1)."
+        contribution:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: "Points contributed to the total: 100 × weight × sub_score."
+
+    ScoreBreakdown:
+      type: object
+      required: [score, components, normalized]
+      description: "The explainable record behind a project's score (FR-004/FR-007)."
+      properties:
+        score:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: "The total 0–100 score; equals the sum of the components' contributions."
+        components:
+          type: array
+          items: { $ref: "#/components/schemas/ScoreComponent" }
+        normalized:
+          type: boolean
+          description: "True when the configured weights were rescaled to sum to 1 before combining (FR-009)."
+        computed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: "When the score was last (re)computed (UTC)."
+
+    # -------------------------------------------------------------------------
+    # Lifecycle (trajectory + status timeline + outcome)
+    # -------------------------------------------------------------------------
+    Snapshot:
+      type: object
+      required: [captured_at, site_status]
+      description: "One append-only re-check observation; many per project, time-ordered."
+      properties:
+        captured_at: { type: string, format: date-time, description: "Snapshot moment (UTC)." }
+        bids_count: { type: integer, nullable: true, description: "Bids observed (Arabic-Indic safe); null when unknown / not-yet-calculated." }
+        site_status: { type: string, enum: [open, closed, awarded, unknown] }
+        score: { type: number, minimum: 0, maximum: 100, nullable: true, description: "Score at this moment; frozen once the project is closed." }
+
+    StatusEvent:
+      type: object
+      required: [at, status]
+      description: "A single site-status transition derived from the snapshot series (one per change)."
+      properties:
+        at: { type: string, format: date-time, description: "When the status first became this value (UTC)." }
+        status: { type: string, enum: [open, closed, awarded, unknown] }
+
+    Lifecycle:
+      type: object
+      required: [snapshots, status_timeline]
+      description: "Response of GET /api/projects/{id}/lifecycle."
+      properties:
+        outcome:
+          type: string
+          nullable: true
+          enum: [open, closed_no_hire, hired, unknown, null]
+          description: "Fail-closed final disposition; null when the project has never been scored/tracked."
+        snapshots:
+          type: array
+          items: { $ref: "#/components/schemas/Snapshot" }
+          description: "Append-only bid/status/score trajectory, oldest first."
+        status_timeline:
+          type: array
+          items: { $ref: "#/components/schemas/StatusEvent" }
+          description: "Deduped status changes (only rows where site_status changed)."
+
+    # -------------------------------------------------------------------------
+    # Settings (bool-capable SettingItem)
+    # -------------------------------------------------------------------------
+    SettingItem:
+      type: object
+      required: [key, value, type, label]
+      description: "One editable tunable. EXTENDED: `type` now includes `\"bool\"` (boolean `value`)."
+      properties:
+        key: { type: string }
+        value:
+          oneOf:
+            - { type: integer }
+            - { type: number }
+            - { type: boolean }
+          description: "Integer for `int`, number for `float`, boolean for `bool` (matches `type`)."
+        type: { type: string, enum: [int, float, bool] }
+        min: { type: number, nullable: true, description: "Inclusive lower bound (numeric keys only)." }
+        max: { type: number, nullable: true, description: "Inclusive upper bound (numeric keys only)." }
+        label: { type: string, description: "Arabic display label." }
+
+    SettingsResponse:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/SettingItem" } }
+
+    SettingsUpdate:
+      type: object
+      description: >
+        Partial map of {key: value} for the keys to change. Each value's JSON type must match the
+        key's registry type (integer / number / boolean). Scoring weights accept any non-negative
+        float (normalized at runtime — NOT required to sum to 1).
+      additionalProperties:
+        oneOf:
+          - { type: number }
+          - { type: boolean }
+      example:
+        score_weight_hiring_rate: 0.4
+        score_weight_competition: 0.25
+        auto_status_personal_enabled: true
+
+    # -------------------------------------------------------------------------
+    # Errors (existing shapes)
+    # -------------------------------------------------------------------------
+    FieldError:
+      type: object
+      required: [key, message]
+      properties:
+        key: { type: string }
+        message: { type: string }
+    ValidationErrorBody:
+      type: object
+      required: [detail, errors]
+      properties:
+        detail: { type: string }
+        errors: { type: array, items: { $ref: "#/components/schemas/FieldError" } }
+    ErrorBody:
+      type: object
+      required: [detail]
+      properties:
+        detail: { type: string }

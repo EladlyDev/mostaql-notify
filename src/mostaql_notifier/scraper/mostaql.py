@@ -13,6 +13,7 @@ to the first occurrence of each label to avoid double-counting.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -29,6 +30,12 @@ from ..parsing.arabic import (
 
 _PROJECT_ID_RE = re.compile(r"/project/(\d+)")
 _DATETIME_FMT = "%Y-%m-%d %H:%M:%S"
+
+# Default DOM/text markers that flag an *awarded* project. Mirrors
+# ``settings_store.DEFAULTS["awarded_markers"]``; the live values are config-driven — a caller
+# passes ``settings.get_json("awarded_markers")`` and we fall back to these when none is supplied.
+# Kept here (with every other selector) so marker knowledge stays confined to this module.
+_DEFAULT_AWARDED_MARKERS: tuple[str, ...] = ("label-prj-awarded", "تم الترسية", "مسند")
 
 
 class ParseError(Exception):
@@ -87,12 +94,19 @@ def _listing_client_name(row: Node) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def parse_project_page(html: str) -> dict:
+def parse_project_page(html: str, awarded_markers: Sequence[str] | None = None) -> dict:
     """Parse a single project page into a flat dict (+ nested ``client``).
+
+    ``awarded_markers`` are the config-driven DOM-class / Arabic-text markers that flag an
+    *awarded* project; when ``None`` the data-model defaults (:data:`_DEFAULT_AWARDED_MARKERS`)
+    are used. A settings-aware caller passes ``settings.get_json("awarded_markers")`` to honour
+    runtime tuning; omitting the argument keeps every existing caller working unchanged.
 
     Raises :class:`ParseError` if the meta block or the client hiring-rate row is absent.
     """
     tree = HTMLParser(html)
+    if awarded_markers is None:
+        awarded_markers = _DEFAULT_AWARDED_MARKERS
 
     title_node = tree.css_first('span[data-type="page-header-title"]')
     title = normalize_text(title_node.text()) if title_node is not None else None
@@ -101,7 +115,7 @@ def parse_project_page(html: str) -> dict:
     if not meta:
         raise ParseError("project page has no meta-label/value rows")
 
-    site_status = _parse_status(meta.get("حالة المشروع"))
+    site_status = _parse_status(meta.get("حالة المشروع"), awarded_markers)
     posted_at = _parse_posted(meta.get("تاريخ النشر"))
     budget_min, budget_max, currency = _parse_budget_node(meta.get("الميزانية"))
     skills = _parse_skills(tree, meta.get("المهارات"))
@@ -148,9 +162,20 @@ def _next_meta_value(label: Node) -> Node | None:
     return None
 
 
-def _parse_status(value: Node | None) -> ProjectStatus:
+def _parse_status(
+    value: Node | None,
+    awarded_markers: Sequence[str] = _DEFAULT_AWARDED_MARKERS,
+) -> ProjectStatus:
+    """Open / closed / awarded / unknown, fail-closed (constitution VII).
+
+    Awarded is checked *first* and requires a positive marker match: an awarded project is also
+    flagged closed on the site, so the award signal must win over a co-present closed marker.
+    Anything that is not clearly open / closed / awarded yields ``unknown`` — never a guess.
+    """
     if value is None:
         return ProjectStatus.unknown
+    if _has_awarded_marker(value, awarded_markers):
+        return ProjectStatus.awarded
     for bdi in value.css("bdi"):
         cls = bdi.attributes.get("class") or ""
         if "label-prj-open" in cls:
@@ -158,6 +183,28 @@ def _parse_status(value: Node | None) -> ProjectStatus:
         if "label-prj-closed" in cls:
             return ProjectStatus.closed
     return ProjectStatus.unknown
+
+
+def _has_awarded_marker(value: Node, awarded_markers: Sequence[str]) -> bool:
+    """True iff a configured marker shows up in the status value as a class token (matched
+    case-insensitively) or as Arabic text (matched via ``normalize_text`` for digit/whitespace/
+    diacritic robustness). Scoped to the status value node only, so an unrelated word elsewhere
+    can never spuriously flag awarded (fail-closed: no positive match => not awarded)."""
+    class_blob = " ".join(
+        [value.attributes.get("class") or ""]
+        + [n.attributes.get("class") or "" for n in value.css("[class]")]
+    ).lower()
+    text_blob = normalize_text(value.text())
+    for marker in awarded_markers:
+        marker = (marker or "").strip()
+        if not marker:
+            continue
+        if marker.lower() in class_blob:
+            return True
+        norm_marker = normalize_text(marker)
+        if norm_marker and norm_marker in text_blob:
+            return True
+    return False
 
 
 def _parse_posted(value: Node | None) -> datetime | None:

@@ -94,6 +94,8 @@ const RECORD: PersonalRecord = {
   hidden: false,
   status_changed_at: null,
   reminder_at: null,
+  auto_status_from: null,
+  auto_status_at: null,
 };
 
 function makeItem(overrides: Partial<ProjectListItem> = {}): ProjectListItem {
@@ -118,6 +120,8 @@ function makeItem(overrides: Partial<ProjectListItem> = {}): ProjectListItem {
     personal_status_label: "عميل محتمل",
     tags: [],
     hidden: false,
+    score: null,
+    freshness: null,
     ...overrides,
   };
 }

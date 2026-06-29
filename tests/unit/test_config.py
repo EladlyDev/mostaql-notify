@@ -67,8 +67,10 @@ def _put_setting(session, key: str, value: str, value_type: str) -> None:
 # ===========================================================================
 
 
-def test_defaults_count_is_39():
-    assert len(DEFAULTS) == 39
+def test_defaults_count_is_66():
+    # 39 (Features 1–3) + 27 Feature 4 keys (6 weights, 9 tuning, 4 re-check loop, 4 freshness,
+    # top_default_count, 2 auto-status toggles, awarded_markers).
+    assert len(DEFAULTS) == 66
 
 
 def test_defaults_every_entry_is_value_type_pair():

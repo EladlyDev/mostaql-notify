@@ -4,7 +4,8 @@ from __future__ import annotations
 from mostaql_notifier.db.models import PersonalRecord
 from tests.api.conftest import make_personal_record, make_project
 
-_CONFIGURED_ORDER = ["new", "interested", "applied", "in_discussion", "won", "lost", "ignored"]
+# Feature 4 inserts `expired_missed` before `ignored` in the seeded personal_statuses.
+_CONFIGURED_ORDER = ["new", "interested", "applied", "in_discussion", "won", "lost", "expired_missed", "ignored"]
 
 
 def _columns(client):

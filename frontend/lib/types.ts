@@ -1,6 +1,9 @@
 // Shared DTOs mirroring the FastAPI backend contract.
 // Screen tasks (Home / Projects / Detail / Settings) import these.
 
+// Feature 4 — derived "still good?" signal on a scored project.
+export type Freshness = "green" | "yellow" | "red";
+
 export interface ProjectListItem {
   id: number;
   title: string | null;
@@ -23,6 +26,9 @@ export interface ProjectListItem {
   personal_status_label: string;
   tags: string[];
   hidden: boolean;
+  // Feature 4 — scoring projection (null for an unscored / non-qualified project).
+  score: number | null;
+  freshness: Freshness | null;
 }
 
 export interface ProjectListResponse {
@@ -56,6 +62,47 @@ export interface ProjectDetail extends ProjectListItem {
   same_client_projects: ProjectListItem[];
   // Feature 3 — the full personal record for the detail/workspace view.
   personal: PersonalRecord | null;
+  // Feature 4 — scoring detail (inherits score / freshness from the list item).
+  outcome: string | null;
+  score_breakdown: ScoreBreakdown | null;
+}
+
+// ---------------------------------------------------------------------------
+// Feature 4 — opportunity score, breakdown, and per-project lifecycle DTOs.
+// ---------------------------------------------------------------------------
+
+export interface ScoreComponent {
+  key: string;
+  label: string;
+  raw: number | null;
+  sub_score: number;
+  weight: number;
+  contribution: number;
+}
+
+export interface ScoreBreakdown {
+  score: number;
+  components: ScoreComponent[];
+  normalized: boolean;
+  computed_at: string | null;
+}
+
+export interface Snapshot {
+  captured_at: string;
+  bids_count: number | null;
+  site_status: string;
+  score: number | null;
+}
+
+export interface StatusEvent {
+  at: string;
+  status: string;
+}
+
+export interface Lifecycle {
+  outcome: string | null;
+  snapshots: Snapshot[];
+  status_timeline: StatusEvent[];
 }
 
 export interface HomeOverview {
@@ -88,6 +135,9 @@ export interface PersonalRecord {
   hidden: boolean;
   status_changed_at: string | null;
   reminder_at: string | null;
+  // Feature 4 — provenance of an automated status transition (one-click revert).
+  auto_status_from: string | null;
+  auto_status_at: string | null;
 }
 
 // Partial create-or-update body; any subset of fields.
@@ -167,8 +217,10 @@ export interface PersonalStatusOption {
 
 export interface SettingItem {
   key: string;
-  value: number | string;
-  type: "int" | "float";
+  // Feature 4 — boolean-capable: integer for `int`, number for `float`,
+  // boolean for `bool` (matches `type`).
+  value: number | string | boolean;
+  type: "int" | "float" | "bool";
   min: number | null;
   max: number | null;
   label: string;

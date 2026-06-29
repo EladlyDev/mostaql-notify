@@ -44,6 +44,8 @@ def to_personal_dto(session: Session, rec: PersonalRecord) -> schemas.PersonalRe
         hidden=rec.hidden,
         status_changed_at=rec.status_changed_at,
         reminder_at=rec.reminder_at,
+        auto_status_from=rec.auto_status_from,
+        auto_status_at=rec.auto_status_at,
     )
 
 
@@ -108,6 +110,25 @@ def toggle_favorite(
     """Flip the favorite flag (one-click feed action + Telegram parity)."""
     _require_project(session, project_id)
     rec = service.toggle_favorite(session, project_id)
+    session.commit()
+    return to_personal_dto(session, rec)
+
+
+@router.post(
+    "/api/projects/{project_id}/personal/revert-auto-status",
+    response_model=schemas.PersonalRecord,
+)
+def revert_auto_status(
+    project_id: int, session: Annotated[Session, Depends(get_db)]
+):
+    """Undo the optional auto personal-status transition (Feature 4) — restore the prior status and
+    clear the auto-trail fields. Owner data (favorite/tags/notes/applied/outcome/files) is never
+    touched; 422 when there is no recorded auto-change to revert."""
+    _require_project(session, project_id)
+    try:
+        rec = service.revert_auto_status(session, project_id)
+    except PersonalValidationError as exc:
+        return _validation_response(exc)
     session.commit()
     return to_personal_dto(session, rec)
 

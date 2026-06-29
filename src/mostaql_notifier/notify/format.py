@@ -26,7 +26,9 @@ CB_FAVORITE = "fav"
 CB_APPLIED = "app"
 CB_DISMISS = "dis"
 CB_NOTE = "note"
-_CALLBACK_ACTIONS = frozenset({CB_FAVORITE, CB_APPLIED, CB_DISMISS, CB_NOTE})
+# Feature 4 — a read-only "Why?" tap that replies with the score breakdown (no mutation, no edit).
+CB_WHY = "why"
+_CALLBACK_ACTIONS = frozenset({CB_FAVORITE, CB_APPLIED, CB_DISMISS, CB_NOTE, CB_WHY})
 
 
 def build_callback_data(action: str, project_id: int) -> str:
@@ -48,8 +50,11 @@ def parse_callback_data(data: str) -> tuple[str, int] | None:
 def build_project_keyboard(project: Project) -> InlineKeyboardMarkup:
     """The inline keyboard attached to each project notification (FR-024).
 
-    Layout (Arabic-first): [⭐ مفضّل] [✅ تقدّمت] / [🙈 إخفاء] [📝 ملاحظة] / [🔗 فتح على مستقل].
-    The first four are callback buttons; "Open" is a URL button to the project on Mostaql.
+    Layout (Arabic-first):
+        [⭐ مفضّل] [✅ تقدّمت] / [🙈 إخفاء] [📝 ملاحظة] / [🎯 لماذا؟] [🔗 فتح على مستقل].
+    The first four are Feature-3 callback buttons (unchanged); "Why?" is a Feature-4 callback button
+    sharing the final row with "Open" (a URL button to the project on Mostaql). When the project has
+    no URL, Open is dropped (existing behavior) and "Why?" stands alone on that row — never omitted.
     """
     pid = project.id
     rows = [
@@ -62,8 +67,10 @@ def build_project_keyboard(project: Project) -> InlineKeyboardMarkup:
             InlineKeyboardButton("📝 ملاحظة", callback_data=build_callback_data(CB_NOTE, pid)),
         ],
     ]
+    last_row = [InlineKeyboardButton("🎯 لماذا؟", callback_data=build_callback_data(CB_WHY, pid))]
     if project.url:
-        rows.append([InlineKeyboardButton("🔗 فتح على مستقل", url=project.url)])
+        last_row.append(InlineKeyboardButton("🔗 فتح على مستقل", url=project.url))
+    rows.append(last_row)
     return InlineKeyboardMarkup(rows)
 
 
@@ -158,7 +165,16 @@ def build_project_message(
     category = html_escape(project.category) if project.category else "unknown"
     url = html_escape(project.url) if project.url else ""
 
-    rest_lines = [
+    # Feature 4 (FR-030) — the opportunity score is the new headline field, on its own line directly
+    # under the title and above the budget. An as-yet-unscored project (no score row / score is None)
+    # omits the line entirely rather than printing a placeholder; scoring never gates the notification.
+    score_row = getattr(project, "score_row", None)
+    score_value = score_row.score if score_row is not None else None
+
+    rest_lines = []
+    if score_value is not None:
+        rest_lines.append(f"🎯 Score: {html_escape(round(score_value))} · {html_escape(tier_text)}")
+    rest_lines += [
         f"💰 {budget} · {html_escape(tier_text)}",
         f"📈 Hiring rate: {html_escape(hiring)}",
         f"🧮 Bids: {html_escape(bids)}",
@@ -183,6 +199,33 @@ def build_project_message(
             raw = raw[:-1]  # belt-and-suspenders: the cut above already guarantees a fit
         text = _render(raw + "…")
     return text
+
+
+def build_score_breakdown_message(project: Project, breakdown: dict) -> str:
+    """HTML "Why?" reply: the total score, the project title, and one line per scored component.
+
+    Pure (no I/O, no clock): the numbers come straight from the stored ``project_scores.breakdown``
+    dict the scoring service returns, so the bot, the dashboard and ``/top`` always agree (FR-031).
+    Arabic-first; every interpolated value is ``html_escape``d and each component sits on its own line
+    so an RTL label and its LTR points value stay stable. ``parse_mode=HTML`` at the call site.
+
+    ``breakdown`` is the nullable ``project_scores.breakdown`` column; a ``None`` (or a dict missing
+    keys) degrades to a header-only "0 / 100" reply rather than raising.
+    """
+    breakdown = breakdown or {}
+    score_value = breakdown.get("score")
+    score = round(score_value) if score_value is not None else 0
+    lines = [
+        f"🎯 تقييم الفرصة: {html_escape(score)} / 100",
+        f"<b>{html_escape(project.title or '')}</b>",
+        "",
+    ]
+    for component in breakdown.get("components", []):
+        label = component.get("label", "")
+        contribution = component.get("contribution")
+        contribution = float(contribution) if contribution is not None else 0.0
+        lines.append(f"• {html_escape(label)}: {html_escape(f'{contribution:.1f}')} نقطة")
+    return "\n".join(lines)
 
 
 def build_health_alert(
