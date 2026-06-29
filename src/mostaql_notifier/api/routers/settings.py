@@ -1,7 +1,11 @@
-"""Settings router — read/tune the worker's editable settings (T025).
+"""Settings router — read/tune the worker's editable settings (T025; T019/T043 for Feature 4).
 
-GET returns the 8 editable tunables (registry order). PUT validates a partial update against
-the registry and persists it all-or-nothing; the worker picks up changes on its next cycle.
+GET returns the editable tunables (registry order) — the original watcher knobs plus the Feature 4
+scoring / re-check / freshness / Telegram keys, including the two ``bool`` auto-status toggles. PUT
+validates a partial update against the registry and persists it all-or-nothing; the worker picks up
+changes on its next cycle. When a PUT changes a scoring weight or tuning value (any ``score_*`` key),
+the server synchronously re-scores every qualified project from stored data before responding so the
+feed reflects the new model on its next refresh (SC-006).
 """
 from __future__ import annotations
 
@@ -13,6 +17,8 @@ from sqlalchemy.orm import Session
 
 from ...config.settings_store import SettingsStore, _serialize
 from ...db.models import Setting
+from ...db.types import utcnow
+from ...scoring import service as scoring_service
 from ..deps import get_db
 from ..schemas import SettingItem, SettingsResponse
 from ..settings_spec import EDITABLE_BY_KEY, EDITABLE_SETTINGS, SettingsValidationError, validate_updates
@@ -25,7 +31,12 @@ def _build_response(store: SettingsStore) -> SettingsResponse:
     items: list[SettingItem] = []
     for spec in EDITABLE_SETTINGS:
         raw = store.get(spec.key)
-        value = int(raw) if spec.type == "int" else float(raw)
+        if spec.type == "bool":
+            value: bool | int | float = bool(raw)
+        elif spec.type == "int":
+            value = int(raw)
+        else:
+            value = float(raw)
         items.append(
             SettingItem(key=spec.key, value=value, type=spec.type, min=spec.min, max=spec.max, label=spec.label)
         )
@@ -64,6 +75,15 @@ def put_settings(body: Annotated[dict, Body(...)], session: Annotated[Session, D
         else:
             session.add(Setting(key=key, value=_serialize(value, vtype), value_type=vtype))
     session.commit()
+
+    # SC-006 — a changed scoring weight or tuning value (any ``score_*`` key) re-scores every
+    # qualified project synchronously from stored data (pure, no I/O) so the feed reflects the new
+    # model on its next refresh. Loop/freshness/top/toggle keys do NOT affect the model → no re-score.
+    if any(key.startswith("score_") for key in coerced):
+        rescore_store = SettingsStore(session)
+        rescore_store.reload()
+        scoring_service.rescore_all(session, settings=rescore_store, now_utc=utcnow())
+        session.commit()
 
     fresh = SettingsStore(session)
     fresh.reload()

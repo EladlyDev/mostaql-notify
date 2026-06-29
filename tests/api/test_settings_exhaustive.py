@@ -16,7 +16,8 @@ from mostaql_notifier.api.settings_spec import (
 from mostaql_notifier.config.settings_store import SettingsStore
 from mostaql_notifier.db.models import Setting
 
-# The 8 editable keys in registry (display) order.
+# The editable keys in registry (display) order — the original 8 watcher tunables followed by the
+# Feature 4 scoring / re-check loop / freshness / Telegram keys (must match EDITABLE_SETTINGS order).
 REGISTRY_ORDER = [
     "poll_interval_seconds",
     "client_refresh_hours",
@@ -26,6 +27,37 @@ REGISTRY_ORDER = [
     "fallback_buffer",
     "fallback_window_hours",
     "min_hiring_rate",
+    # Feature 4 — scoring weights
+    "score_weight_hiring_rate",
+    "score_weight_hire_volume",
+    "score_weight_budget",
+    "score_weight_competition",
+    "score_weight_freshness",
+    "score_weight_rating",
+    # Feature 4 — scoring tuning
+    "score_hiring_baseline",
+    "score_hiring_shrink_k",
+    "score_hire_volume_halfsat",
+    "score_budget_cap_usd",
+    "score_budget_tier2_scale",
+    "score_competition_halfsat_bids",
+    "score_competition_vel_cap",
+    "score_freshness_halflife_hours",
+    "score_rating_min_reviews",
+    # Feature 4 — re-check loop
+    "recheck_interval_seconds",
+    "recheck_batch_size",
+    "recheck_min_interval_seconds",
+    "tracking_grace_hours",
+    # Feature 4 — freshness thresholds
+    "freshness_green_max_bids",
+    "freshness_green_max_age_hours",
+    "freshness_red_min_bids",
+    "freshness_red_min_age_hours",
+    # Feature 4 — Telegram default + toggles
+    "top_default_count",
+    "auto_status_site_enabled",
+    "auto_status_personal_enabled",
 ]
 
 # Default seeded values for the editable keys (from settings_store.DEFAULTS).
@@ -38,6 +70,32 @@ DEFAULTS = {
     "fallback_buffer": 2,
     "fallback_window_hours": 24,
     "min_hiring_rate": 0,
+    "score_weight_hiring_rate": 0.35,
+    "score_weight_hire_volume": 0.15,
+    "score_weight_budget": 0.15,
+    "score_weight_competition": 0.20,
+    "score_weight_freshness": 0.10,
+    "score_weight_rating": 0.05,
+    "score_hiring_baseline": 50.0,
+    "score_hiring_shrink_k": 5,
+    "score_hire_volume_halfsat": 10,
+    "score_budget_cap_usd": 1000,
+    "score_budget_tier2_scale": 0.6,
+    "score_competition_halfsat_bids": 15,
+    "score_competition_vel_cap": 3.0,
+    "score_freshness_halflife_hours": 12.0,
+    "score_rating_min_reviews": 3,
+    "recheck_interval_seconds": 1800,
+    "recheck_batch_size": 20,
+    "recheck_min_interval_seconds": 1500,
+    "tracking_grace_hours": 72,
+    "freshness_green_max_bids": 8,
+    "freshness_green_max_age_hours": 12,
+    "freshness_red_min_bids": 20,
+    "freshness_red_min_age_hours": 48,
+    "top_default_count": 5,
+    "auto_status_site_enabled": True,
+    "auto_status_personal_enabled": False,
 }
 
 TYPES = {
@@ -49,6 +107,32 @@ TYPES = {
     "fallback_buffer": "int",
     "fallback_window_hours": "int",
     "min_hiring_rate": "float",
+    "score_weight_hiring_rate": "float",
+    "score_weight_hire_volume": "float",
+    "score_weight_budget": "float",
+    "score_weight_competition": "float",
+    "score_weight_freshness": "float",
+    "score_weight_rating": "float",
+    "score_hiring_baseline": "float",
+    "score_hiring_shrink_k": "int",
+    "score_hire_volume_halfsat": "int",
+    "score_budget_cap_usd": "int",
+    "score_budget_tier2_scale": "float",
+    "score_competition_halfsat_bids": "int",
+    "score_competition_vel_cap": "float",
+    "score_freshness_halflife_hours": "float",
+    "score_rating_min_reviews": "int",
+    "recheck_interval_seconds": "int",
+    "recheck_batch_size": "int",
+    "recheck_min_interval_seconds": "int",
+    "tracking_grace_hours": "int",
+    "freshness_green_max_bids": "int",
+    "freshness_green_max_age_hours": "int",
+    "freshness_red_min_bids": "int",
+    "freshness_red_min_age_hours": "int",
+    "top_default_count": "int",
+    "auto_status_site_enabled": "bool",
+    "auto_status_personal_enabled": "bool",
 }
 
 
@@ -89,12 +173,12 @@ def _err_keys(resp_json) -> set:
 # --------------------------------------------------------------------------- 1. GET
 
 
-def test_get_returns_exactly_8_items_in_registry_order(api_env):
+def test_get_returns_full_registry_in_order(api_env):
     client = api_env.client()
     r = client.get("/api/settings")
     assert r.status_code == 200
     items = r.json()["items"]
-    assert len(items) == 8
+    assert len(items) == len(REGISTRY_ORDER) == 34
     assert [it["key"] for it in items] == REGISTRY_ORDER
     # registry order matches the spec tuple too
     assert [s.key for s in EDITABLE_SETTINGS] == REGISTRY_ORDER

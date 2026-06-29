@@ -4,6 +4,7 @@ from __future__ import annotations
 from mostaql_notifier.db.models import Setting
 
 _EXPECTED_KEYS = {
+    # original watcher tunables
     "poll_interval_seconds",
     "client_refresh_hours",
     "budget_primary_floor",
@@ -12,6 +13,37 @@ _EXPECTED_KEYS = {
     "fallback_buffer",
     "fallback_window_hours",
     "min_hiring_rate",
+    # Feature 4 — scoring weights
+    "score_weight_hiring_rate",
+    "score_weight_hire_volume",
+    "score_weight_budget",
+    "score_weight_competition",
+    "score_weight_freshness",
+    "score_weight_rating",
+    # Feature 4 — scoring tuning
+    "score_hiring_baseline",
+    "score_hiring_shrink_k",
+    "score_hire_volume_halfsat",
+    "score_budget_cap_usd",
+    "score_budget_tier2_scale",
+    "score_competition_halfsat_bids",
+    "score_competition_vel_cap",
+    "score_freshness_halflife_hours",
+    "score_rating_min_reviews",
+    # Feature 4 — re-check loop
+    "recheck_interval_seconds",
+    "recheck_batch_size",
+    "recheck_min_interval_seconds",
+    "tracking_grace_hours",
+    # Feature 4 — freshness thresholds
+    "freshness_green_max_bids",
+    "freshness_green_max_age_hours",
+    "freshness_red_min_bids",
+    "freshness_red_min_age_hours",
+    # Feature 4 — Telegram default + toggles
+    "top_default_count",
+    "auto_status_site_enabled",
+    "auto_status_personal_enabled",
 }
 
 
@@ -21,16 +53,16 @@ def _stored_value(api_env, key: str) -> str:
         return row.value if row else None
 
 
-def test_get_settings_returns_exactly_eight_keys_with_metadata(api_env):
+def test_get_settings_returns_full_registry_with_metadata(api_env):
     client = api_env.client(auth_enabled=False)
     body = client.get("/api/settings").json()
     items = body["items"]
-    assert len(items) == 8
+    assert len(items) == len(_EXPECTED_KEYS) == 34
     assert {it["key"] for it in items} == _EXPECTED_KEYS
     for it in items:
         for field in ("key", "value", "type", "min", "max", "label"):
             assert field in it
-        assert it["type"] in ("int", "float")
+        assert it["type"] in ("int", "float", "bool")
 
     poll = next(it for it in items if it["key"] == "poll_interval_seconds")
     assert poll["type"] == "int"
@@ -40,6 +72,11 @@ def test_get_settings_returns_exactly_eight_keys_with_metadata(api_env):
     assert rate["type"] == "float"
     assert rate["min"] == 0
     assert rate["max"] == 100
+
+    toggle = next(it for it in items if it["key"] == "auto_status_personal_enabled")
+    assert toggle["type"] == "bool"
+    assert toggle["value"] is False
+    assert toggle["min"] is None and toggle["max"] is None
 
 
 def test_valid_put_persists_to_settings_table(api_env):
