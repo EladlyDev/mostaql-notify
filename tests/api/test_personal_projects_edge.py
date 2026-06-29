@@ -15,7 +15,8 @@ from sqlalchemy import func, select
 from mostaql_notifier.db.models import PersonalRecord, Setting
 from tests.api.conftest import make_personal_record, make_project
 
-# The 7 configured pipeline stages, in order (settings seed `personal_statuses`).
+# The 8 configured pipeline stages, in order (settings seed `personal_statuses`).
+# Feature 4 inserts `expired_missed` (the optional auto-transition target) before `ignored`.
 _EXPECTED_STAGES = [
     {"key": "new", "label": "جديد"},
     {"key": "interested", "label": "مهتم"},
@@ -23,6 +24,7 @@ _EXPECTED_STAGES = [
     {"key": "in_discussion", "label": "قيد النقاش"},
     {"key": "won", "label": "ربح"},
     {"key": "lost", "label": "خسارة"},
+    {"key": "expired_missed", "label": "منتهي/فائت"},
     {"key": "ignored", "label": "تجاهل"},
 ]
 

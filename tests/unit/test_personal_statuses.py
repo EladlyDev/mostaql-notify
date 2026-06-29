@@ -16,7 +16,7 @@ def test_default_is_first_entry(db_session, settings):
     assert statuses.default_status(db_session) == "new"
     listed = statuses.list_statuses(db_session)
     assert [s["key"] for s in listed] == [
-        "new", "interested", "applied", "in_discussion", "won", "lost", "ignored"
+        "new", "interested", "applied", "in_discussion", "won", "lost", "expired_missed", "ignored"
     ]
 
 
