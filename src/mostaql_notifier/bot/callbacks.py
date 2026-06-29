@@ -21,9 +21,12 @@ from ..notify.format import (
     CB_DISMISS,
     CB_FAVORITE,
     CB_NOTE,
+    CB_WHY,
+    build_score_breakdown_message,
     parse_callback_data,
 )
 from ..personal import service, statuses
+from ..scoring import service as scoring_service
 from . import conversation
 from .app import is_owner, session_scope
 
@@ -36,6 +39,7 @@ _APPLIED_NEW = "✅ سُجّل التقديم"
 _APPLIED_AGAIN = "سبق التسجيل"
 _DISMISSED = "🙈 تم الإخفاء"
 _NOT_FOUND = "المشروع غير موجود"
+_NO_SCORE = "لا يوجد تقييم لهذا المشروع بعد"
 
 #: Separator between the original notification body and the appended state footer (kept stable so a
 #: repeat tap rewrites — rather than stacks — the footer, staying idempotent).
@@ -60,6 +64,29 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # Add-note opens a conversation (ForceReply) rather than mutating immediately.
     if action == CB_NOTE:
         await conversation.start_note(update, context, project_id)
+        return
+
+    # Feature 4 — "Why?" is a READ: it must run before (and never reach) the mutation block below and
+    # must not edit the original notification. It sends a NEW reply with the stored breakdown, leaving
+    # the project record and the original message + its Feature-3 buttons untouched (FR-031).
+    if action == CB_WHY:
+        with session_scope() as session:
+            project = session.get(Project, project_id)
+            if project is None:
+                await query.answer(_NOT_FOUND)  # old/expired notification or deleted project
+                return
+            breakdown = scoring_service.get_breakdown(session, project_id)
+            text = (
+                build_score_breakdown_message(project, breakdown)
+                if breakdown is not None
+                else None
+            )
+        if text is None:  # exists but never scored (not qualified / backfill not yet reached)
+            await query.answer()
+            await query.message.reply_text(_NO_SCORE)
+            return
+        await query.answer()  # clear the spinner, then reply with the breakdown (no message edit)
+        await query.message.reply_text(text, parse_mode="HTML")
         return
 
     with session_scope() as session:

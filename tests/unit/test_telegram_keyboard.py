@@ -16,24 +16,26 @@ from mostaql_notifier.notify.format import (
     CB_DISMISS,
     CB_FAVORITE,
     CB_NOTE,
+    CB_WHY,
     build_callback_data,
     build_project_keyboard,
     parse_callback_data,
 )
 
-_ACTIONS = [CB_FAVORITE, CB_APPLIED, CB_DISMISS, CB_NOTE]
+# Feature 4 adds the "Why?" callback action; the keyboard now carries five callback buttons.
+_ACTIONS = [CB_FAVORITE, CB_APPLIED, CB_DISMISS, CB_NOTE, CB_WHY]
 
 
 def _project(pid: int = 123, url: str | None = "https://mostaql.com/project/123"):
     return SimpleNamespace(id=pid, url=url)
 
 
-def test_keyboard_has_four_callback_buttons_and_an_open_url_button():
+def test_keyboard_has_five_callback_buttons_and_an_open_url_button():
     kb = build_project_keyboard(_project())
     assert isinstance(kb, InlineKeyboardMarkup)
     buttons = [b for row in kb.inline_keyboard for b in row]
 
-    # The four action buttons carry our callback_data; none of them is a URL button.
+    # The five action buttons (incl. Feature-4 "Why?") carry our callback_data; none is a URL button.
     callback_buttons = [b for b in buttons if b.callback_data is not None]
     actions = {parse_callback_data(b.callback_data)[0] for b in callback_buttons}
     assert actions == set(_ACTIONS)
@@ -50,7 +52,8 @@ def test_keyboard_omits_open_button_when_no_url():
     kb = build_project_keyboard(_project(url=None))
     buttons = [b for row in kb.inline_keyboard for b in row]
     assert all(b.url is None for b in buttons)
-    assert len([b for b in buttons if b.callback_data is not None]) == 4
+    # Open is dropped, but the five callback buttons (incl. the lone "Why?") remain.
+    assert len([b for b in buttons if b.callback_data is not None]) == 5
 
 
 @pytest.mark.parametrize("action", _ACTIONS)

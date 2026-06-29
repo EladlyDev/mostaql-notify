@@ -20,6 +20,7 @@ from ..config.settings_store import SettingsStore, _serialize
 from ..db.models import Project, Setting
 from ..personal import statuses
 from ..personal.stats import compute_health, compute_stats
+from ..scoring import service as scoring_service
 from .app import is_owner, session_scope
 
 log = logging.getLogger("mostaql.bot")
@@ -136,6 +137,47 @@ async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"آخر نجاح: {last_text}",
     ]
     await message.reply_text("\n".join(lines))
+
+
+async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """``/top [n]`` — list the top ``n`` open projects by opportunity score (read-only, FR-032).
+
+    ``n`` defaults to ``top_default_count`` (5); a non-integer arg falls back to the default and is
+    never an error; the value is clamped to ``1..20`` so ``/top 9999`` can't ask for an unbounded
+    list. Fewer-than-``n`` open → the shorter available list; none → a friendly message.
+    """
+    if not is_owner(update):
+        return
+    message = update.message
+    if message is None:
+        return
+
+    with session_scope() as session:
+        n = SettingsStore(session).get_int("top_default_count")
+        if context.args:
+            try:
+                n = int(context.args[0])
+            except (TypeError, ValueError):
+                pass  # non-integer token → keep the default (never raises)
+        n = max(1, min(n, 20))
+
+        rows = scoring_service.top_open(session, n)
+        entries = []
+        for i, p in enumerate(rows, start=1):
+            title = p.title or "(بدون عنوان)"
+            score = p.score_row.score if p.score_row is not None else None
+            score_text = round(score) if score is not None else "?"
+            tier_text = f"Tier {p.tier}" if p.tier is not None else "Tier ?"
+            entry = f"{i}. {title} · {score_text} · {tier_text}"
+            if p.url:
+                entry = f"{entry}\n{p.url}"
+            entries.append(entry)
+
+    if not entries:
+        await message.reply_text("🏆 لا مشاريع مفتوحة حاليًا")
+        return
+    header = f"🏆 أفضل {len(entries)} مشاريع مفتوحة"
+    await message.reply_text("\n".join([header, "", *entries]))
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

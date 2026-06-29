@@ -27,13 +27,14 @@ from mostaql_notifier.notify.format import (
     CB_DISMISS,
     CB_FAVORITE,
     CB_NOTE,
+    CB_WHY,
     build_callback_data,
     build_project_keyboard,
     parse_callback_data,
 )
 from mostaql_notifier.notify.telegram import TelegramSender
 
-_ACTIONS = [CB_FAVORITE, CB_APPLIED, CB_DISMISS, CB_NOTE]
+_ACTIONS = [CB_FAVORITE, CB_APPLIED, CB_DISMISS, CB_NOTE, CB_WHY]
 _IDS = [0, 1, 7, 12345, 2_000_000_000]
 
 
@@ -137,14 +138,17 @@ def _project(pid: int = 777, url: str | None = "https://mostaql.com/project/777"
 
 
 def test_keyboard_button_order_matches_documented_layout():
-    """[⭐ fav][✅ app] / [🙈 dis][📝 note] / [🔗 Open] — positions are contractual, not just the set."""
+    """[⭐ fav][✅ app] / [🙈 dis][📝 note] / [🎯 why][🔗 Open] — positions are contractual.
+
+    Feature 4 adds the "Why?" callback button, which shares the final row with Open.
+    """
     kb = build_project_keyboard(_project(pid=777))
     grid = kb.inline_keyboard
 
-    assert len(grid) == 3  # two action rows + the Open row
-    assert [len(row) for row in grid] == [2, 2, 1]
+    assert len(grid) == 3  # two action rows + the why/open row
+    assert [len(row) for row in grid] == [2, 2, 2]
 
-    # Row 0 / Row 1: the four callback buttons in the exact documented order.
+    # Row 0 / Row 1: the four Feature-3 callback buttons in the exact documented order.
     assert grid[0][0].callback_data == build_callback_data(CB_FAVORITE, 777)
     assert grid[0][1].callback_data == build_callback_data(CB_APPLIED, 777)
     assert grid[1][0].callback_data == build_callback_data(CB_DISMISS, 777)
@@ -154,21 +158,28 @@ def test_keyboard_button_order_matches_documented_layout():
         for btn in row:
             assert btn.url is None
 
-    # Row 2: the single Open button is a URL button carrying NO callback_data.
-    open_btn = grid[2][0]
+    # Row 2: the Feature-4 "Why?" callback button, then the Open URL button (no callback_data).
+    why_btn = grid[2][0]
+    assert why_btn.callback_data == build_callback_data(CB_WHY, 777)
+    assert why_btn.url is None
+    open_btn = grid[2][1]
     assert open_btn.url == "https://mostaql.com/project/777"
     assert open_btn.callback_data is None
 
 
 @pytest.mark.parametrize("url", [None, ""])
 def test_keyboard_omits_open_row_when_url_is_falsy(url):
-    """No reachable link → no Open row at all (only the two action rows, four callback buttons)."""
+    """No reachable link → Open is dropped; the lone "Why?" callback button keeps the final row."""
     kb = build_project_keyboard(_project(url=url))
     grid = kb.inline_keyboard
-    assert len(grid) == 2
+    assert len(grid) == 3  # two action rows + the lone "Why?" row
+    assert [len(row) for row in grid] == [2, 2, 1]
     buttons = [b for row in grid for b in row]
-    assert len(buttons) == 4
+    assert len(buttons) == 5
     assert all(b.url is None for b in buttons)
+    assert all(b.callback_data is not None for b in buttons)
+    # The surviving final-row button is "Why?" (default pid 777).
+    assert grid[2][0].callback_data == build_callback_data(CB_WHY, 777)
     assert all(b.callback_data is not None for b in buttons)
 
 

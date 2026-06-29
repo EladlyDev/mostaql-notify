@@ -65,8 +65,8 @@ def build_application(token: str) -> Application:
     """Build the long-poll :class:`telegram.ext.Application` with every handler registered.
 
     Handlers (imported lazily to avoid an ``app`` ↔ handler import cycle):
-      * ``CallbackQueryHandler`` — the inline ``pf:*`` action buttons.
-      * ``CommandHandler`` × 5 — ``/find /pause /resume /health /stats``.
+      * ``CallbackQueryHandler`` — the inline ``pf:*`` action buttons (incl. Feature 4's "Why?").
+      * ``CommandHandler`` × 6 — ``/find /pause /resume /health /stats /top``.
       * ``MessageHandler`` (plain text, non-command) — the owner's reply that completes an
         *add-note* force-reply flow.
     """
@@ -83,6 +83,7 @@ def build_application(token: str) -> Application:
     application.add_handler(CommandHandler("resume", commands.resume_command))
     application.add_handler(CommandHandler("health", commands.health_command))
     application.add_handler(CommandHandler("stats", commands.stats_command))
+    application.add_handler(CommandHandler("top", commands.top_command))
 
     # Add-note completion: the owner's next plain-text message after tapping 📝 (a ForceReply was
     # sent). Commands are excluded so e.g. ``/stats`` mid-flow is still handled as a command.
