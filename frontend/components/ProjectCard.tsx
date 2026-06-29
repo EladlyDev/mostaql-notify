@@ -15,6 +15,7 @@ import { useStatuses } from "@/lib/useStatuses";
 import { Bidi } from "@/components/Bidi";
 import { FavoriteToggle } from "@/components/personal/FavoriteToggle";
 import { ProjectRowMenu } from "@/components/personal/ProjectRowMenu";
+import { FreshnessBadge } from "@/components/score/FreshnessBadge";
 import {
   QualifiedBadge,
   SiteStatusBadge,
@@ -95,6 +96,21 @@ function ProjectCardItem({
         <Field
           label="المستوى"
           value={p.tier_label ? <Bidi>{p.tier_label}</Bidi> : DASH}
+        />
+        <Field
+          label="التقييم"
+          value={
+            <span className="flex items-center gap-1.5">
+              <FreshnessBadge freshness={p.freshness} />
+              <span>
+                {p.score != null ? (
+                  <Bidi>{formatNumber(Math.round(p.score))}</Bidi>
+                ) : (
+                  DASH
+                )}
+              </span>
+            </span>
+          }
         />
         <Field
           label="عدد العروض"

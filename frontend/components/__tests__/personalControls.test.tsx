@@ -78,6 +78,8 @@ const RECORD: PersonalRecord = {
   hidden: false,
   status_changed_at: null,
   reminder_at: null,
+  auto_status_from: null,
+  auto_status_at: null,
 };
 
 function withClient(ui: React.ReactElement) {

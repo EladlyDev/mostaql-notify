@@ -140,6 +140,7 @@ export function Filters({ controller }: { controller: UseProjectsResult }) {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="posted_at">تاريخ النشر</SelectItem>
+              <SelectItem value="score">التقييم</SelectItem>
               <SelectItem value="budget">الميزانية</SelectItem>
               <SelectItem value="bids_count">عدد العروض</SelectItem>
               <SelectItem value="hiring_rate">نسبة التوظيف</SelectItem>
@@ -265,6 +266,25 @@ export function Filters({ controller }: { controller: UseProjectsResult }) {
           max={100}
           placeholder="0–100"
           onCommit={(v) => patch({ min_hiring_rate: v })}
+        />
+
+        <NumberField
+          id="score_min"
+          label="أدنى تقييم"
+          value={params.score_min}
+          min={0}
+          max={100}
+          placeholder="0–100"
+          onCommit={(v) => patch({ score_min: v })}
+        />
+        <NumberField
+          id="score_max"
+          label="أعلى تقييم"
+          value={params.score_max}
+          min={0}
+          max={100}
+          placeholder="0–100"
+          onCommit={(v) => patch({ score_max: v })}
         />
 
         <NumberField

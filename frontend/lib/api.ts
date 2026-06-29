@@ -7,6 +7,7 @@ import type {
   BoardResponse,
   ControlState,
   HomeOverview,
+  Lifecycle,
   PersonalRecord,
   PersonalStatusOption,
   PersonalUpdate,
@@ -155,6 +156,27 @@ export function getProjects(
 
 export function getProject(id: number | string): Promise<ProjectDetail> {
   return apiFetch<ProjectDetail>(`/api/projects/${id}`);
+}
+
+// ---------------------------------------------------------------------------
+// Feature 4 — opportunity score, lifecycle, and auto-status revert
+// ---------------------------------------------------------------------------
+
+// The project's append-only lifecycle: bid/status/score trajectory, deduped
+// status timeline, and final outcome.
+export function getLifecycle(id: number | string): Promise<Lifecycle> {
+  return apiFetch<Lifecycle>(`/api/projects/${id}/lifecycle`);
+}
+
+// Undo a watcher-applied automatic status change, restoring the prior stage.
+// Returns the refreshed personal record.
+export function revertAutoStatus(
+  id: number | string
+): Promise<PersonalRecord> {
+  return apiFetch<PersonalRecord>(
+    `/api/projects/${id}/personal/revert-auto-status`,
+    { method: "POST" }
+  );
 }
 
 export function getHome(): Promise<HomeOverview> {

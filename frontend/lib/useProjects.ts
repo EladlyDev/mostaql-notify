@@ -11,7 +11,12 @@ import type { ProjectListResponse } from "@/lib/types";
 // Parsed filter / sort / paging state derived from the URL query string.
 // ---------------------------------------------------------------------------
 
-export type SortField = "posted_at" | "budget" | "bids_count" | "hiring_rate";
+export type SortField =
+  | "posted_at"
+  | "budget"
+  | "bids_count"
+  | "hiring_rate"
+  | "score";
 export type SortOrder = "asc" | "desc";
 export type SiteStatus = "open" | "closed" | "unknown";
 
@@ -30,6 +35,9 @@ export interface ProjectFilters {
   personal_status?: string;
   favorites_only?: boolean;
   include_hidden?: boolean;
+  // Feature 4 — opportunity-score range (0–100).
+  score_min?: number;
+  score_max?: number;
 }
 
 export interface ProjectParams extends ProjectFilters {
@@ -58,12 +66,21 @@ const FILTER_KEYS: (keyof ProjectFilters)[] = [
   "personal_status",
   "favorites_only",
   "include_hidden",
+  "score_min",
+  "score_max",
 ];
 
 function num(raw: string | null): number | undefined {
   if (raw === null || raw.trim() === "") return undefined;
   const n = Number(raw);
   return Number.isFinite(n) ? n : undefined;
+}
+
+/** Parse a 0–100 score bound, clamping into range (out-of-range → clamped). */
+function scoreNum(raw: string | null): number | undefined {
+  const n = num(raw);
+  if (n === undefined) return undefined;
+  return Math.min(100, Math.max(0, n));
 }
 
 function parseParams(sp: URLSearchParams): ProjectParams {
@@ -81,6 +98,7 @@ function parseParams(sp: URLSearchParams): ProjectParams {
     sortRaw === "budget" ||
     sortRaw === "bids_count" ||
     sortRaw === "hiring_rate" ||
+    sortRaw === "score" ||
     sortRaw === "posted_at"
       ? sortRaw
       : DEFAULT_SORT;
@@ -113,6 +131,8 @@ function parseParams(sp: URLSearchParams): ProjectParams {
     personal_status: sp.get("personal_status") ?? undefined,
     favorites_only: sp.get("favorites_only") === "true" ? true : undefined,
     include_hidden: sp.get("include_hidden") === "true" ? true : undefined,
+    score_min: scoreNum(sp.get("score_min")),
+    score_max: scoreNum(sp.get("score_max")),
     sort,
     order,
     page,
@@ -138,6 +158,8 @@ function toQueryParams(
     personal_status: p.personal_status,
     favorites_only: p.favorites_only ? true : undefined,
     include_hidden: p.include_hidden ? true : undefined,
+    score_min: p.score_min,
+    score_max: p.score_max,
     sort: p.sort === DEFAULT_SORT ? undefined : p.sort,
     order: p.order === DEFAULT_ORDER ? undefined : p.order,
     page: p.page > 1 ? p.page : undefined,

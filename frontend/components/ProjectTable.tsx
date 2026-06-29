@@ -15,6 +15,7 @@ import { useStatuses } from "@/lib/useStatuses";
 import { Bidi } from "@/components/Bidi";
 import { FavoriteToggle } from "@/components/personal/FavoriteToggle";
 import { ProjectRowMenu } from "@/components/personal/ProjectRowMenu";
+import { FreshnessBadge } from "@/components/score/FreshnessBadge";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -77,6 +78,7 @@ export function ProjectTable({ items }: { items: ProjectListItem[] }) {
             <TableHead className="text-start">الميزانية</TableHead>
             <TableHead className="text-start">المستوى</TableHead>
             <TableHead className="text-start">العروض</TableHead>
+            <TableHead className="text-start">التقييم</TableHead>
             <TableHead className="text-start">النشر</TableHead>
             <TableHead className="text-start">الحالة</TableHead>
             <TableHead className="text-start">التأهل</TableHead>
@@ -136,6 +138,18 @@ export function ProjectTable({ items }: { items: ProjectListItem[] }) {
                 ) : (
                   DASH
                 )}
+              </TableCell>
+              <TableCell className="text-sm tabular-nums">
+                <div className="flex items-center gap-1.5">
+                  <FreshnessBadge freshness={p.freshness} />
+                  <span>
+                    {p.score != null ? (
+                      <Bidi>{formatNumber(Math.round(p.score))}</Bidi>
+                    ) : (
+                      DASH
+                    )}
+                  </span>
+                </div>
               </TableCell>
               <TableCell className="whitespace-nowrap text-sm">
                 <span title={formatAbsolute(p.posted_at)}>
