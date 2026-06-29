@@ -19,8 +19,11 @@ from mostaql_notifier.db import session as session_mod
 from mostaql_notifier.db.models import (
     Attachment,
     Client,
+    Outcome,
     PersonalRecord,
     Project,
+    ProjectScore,
+    ProjectSnapshot,
     ProjectStatus,
     ScrapeRun,
 )
@@ -190,3 +193,64 @@ def make_scrape_run(session, **over) -> ScrapeRun:
     session.add(r)
     session.flush()
     return r
+
+
+def make_project_score(session, **over) -> ProjectScore:
+    """A valid 1:1 score row. Pass ``project=`` (or ``project_id``)."""
+    project = over.pop("project", None)
+    defaults = dict(
+        project_id=project.id if project is not None else over.get("project_id"),
+        score=70.0,
+        breakdown={"score": 70.0, "components": [], "normalized": False},
+        computed_at=_utc(),
+        outcome=Outcome.open,
+        tracking_active=True,
+    )
+    defaults.update(over)
+    row = ProjectScore(**defaults)
+    session.add(row)
+    session.flush()
+    return row
+
+
+def make_project_snapshot(session, **over) -> ProjectSnapshot:
+    """A single append-only trajectory row. Pass ``project=`` (or ``project_id``)."""
+    project = over.pop("project", None)
+    defaults = dict(
+        project_id=project.id if project is not None else over.get("project_id"),
+        captured_at=_utc(),
+        bids_count=3,
+        site_status=ProjectStatus.open,
+        score=70.0,
+    )
+    defaults.update(over)
+    row = ProjectSnapshot(**defaults)
+    session.add(row)
+    session.flush()
+    return row
+
+
+def make_trajectory(session, project, points) -> list[ProjectSnapshot]:
+    """Build an ordered snapshot series for ``project``.
+
+    ``points`` is an iterable of either dicts (kwargs for ``make_project_snapshot``) or
+    ``(captured_at, bids_count, site_status, score)`` tuples — useful for competition-velocity and
+    lifecycle tests that need a multi-point history.
+    """
+    snaps: list[ProjectSnapshot] = []
+    for pt in points:
+        if isinstance(pt, dict):
+            snaps.append(make_project_snapshot(session, project=project, **pt))
+        else:
+            captured_at, bids_count, site_status, score = pt
+            snaps.append(
+                make_project_snapshot(
+                    session,
+                    project=project,
+                    captured_at=captured_at,
+                    bids_count=bids_count,
+                    site_status=site_status,
+                    score=score,
+                )
+            )
+    return snaps

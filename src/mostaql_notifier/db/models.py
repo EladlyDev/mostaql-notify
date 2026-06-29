@@ -22,7 +22,17 @@ from .types import JSONType, UtcDateTime, make_enum, utcnow
 class ProjectStatus(str, enum.Enum):
     open = "open"
     closed = "closed"
+    awarded = "awarded"  # Feature 4 — explicit award marker observed on the project page
     unknown = "unknown"  # fail-closed default — never a parse failure
+
+
+class Outcome(str, enum.Enum):
+    """A project's final disposition (Feature 4, fail-closed — never assume ``hired``)."""
+
+    open = "open"                      # still actionable; score live
+    closed_no_hire = "closed_no_hire"  # closed with no visible award
+    hired = "hired"                    # explicit award signal only
+    unknown = "unknown"                # ambiguous / unparseable ending
 
 
 class EvalStatus(str, enum.Enum):
@@ -112,6 +122,14 @@ class Project(Base):
         back_populates="project", uselist=False
     )
     attachments: Mapped[list[Attachment]] = relationship(back_populates="project")
+    # Feature 4 — latest score/outcome/tracking (1:1) + the append-only trajectory (many).
+    # Non-cascading like the personal layer: automation never deletes a scraped project.
+    score_row: Mapped[ProjectScore | None] = relationship(
+        back_populates="project", uselist=False
+    )
+    snapshots: Mapped[list[ProjectSnapshot]] = relationship(
+        back_populates="project", order_by="ProjectSnapshot.captured_at"
+    )
 
     __table_args__ = (
         sa.Index("ix_projects_posted_at", "posted_at"),
@@ -146,6 +164,9 @@ class PersonalRecord(Base):
     hidden: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
     status_changed_at: Mapped[object | None] = mapped_column(UtcDateTime)
     reminder_at: Mapped[object | None] = mapped_column(UtcDateTime)  # reserved; inert this feature
+    # Feature 4 — reversible auto-transition trail (NULL unless an automated change fired).
+    auto_status_from: Mapped[str | None] = mapped_column(sa.String)  # status held before the auto change
+    auto_status_at: Mapped[object | None] = mapped_column(UtcDateTime)  # when the auto change fired
     created_at: Mapped[object] = mapped_column(UtcDateTime, nullable=False, default=utcnow)
     updated_at: Mapped[object] = mapped_column(
         UtcDateTime, nullable=False, default=utcnow, onupdate=utcnow
@@ -189,6 +210,9 @@ class ScrapeRun(Base):
     __tablename__ = "scrape_runs"
 
     id: Mapped[int] = mapped_column(sa.Integer, primary_key=True)
+    # Feature 4 — "poll" (the fast new-project cycle) | "recheck" (the watch-over-time loop).
+    # /health filters to the latest kind="poll"; re-check cycles log here too (Fail Loud).
+    kind: Mapped[str] = mapped_column(sa.String, nullable=False, default="poll")
     started_at: Mapped[object] = mapped_column(UtcDateTime, nullable=False)
     finished_at: Mapped[object | None] = mapped_column(UtcDateTime)
     found_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
@@ -228,3 +252,64 @@ class AppState(Base):
 
     key: Mapped[str] = mapped_column(sa.String, primary_key=True)
     value: Mapped[str] = mapped_column(sa.String, nullable=False)
+
+
+class ProjectScore(Base):
+    """Latest opportunity score + breakdown and the per-project lifecycle singletons (Feature 4).
+
+    1:1 with ``projects`` (shared PK like ``personal_records``). Created lazily the first time a
+    project is scored. ``score``/``breakdown`` are *derived* values the automation recomputes (the
+    full history is preserved append-only in ``project_snapshots``), so overwriting the latest is
+    allowed (constitution IV); no owner data lives here.
+    """
+
+    __tablename__ = "project_scores"
+
+    project_id: Mapped[int] = mapped_column(
+        sa.ForeignKey("projects.id"), primary_key=True
+    )
+    score: Mapped[float | None] = mapped_column(sa.Float)  # latest 0–100; NULL until first computed
+    breakdown: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
+    computed_at: Mapped[object | None] = mapped_column(UtcDateTime)
+    outcome: Mapped[Outcome] = mapped_column(
+        make_enum(Outcome, "outcome"), nullable=False, default=Outcome.open
+    )
+    tracking_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+    last_checked_at: Mapped[object | None] = mapped_column(UtcDateTime)  # enforces re-check min-interval
+    closed_observed_at: Mapped[object | None] = mapped_column(UtcDateTime)  # grace-period anchor
+    created_at: Mapped[object] = mapped_column(UtcDateTime, nullable=False, default=utcnow)
+    updated_at: Mapped[object] = mapped_column(
+        UtcDateTime, nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+    project: Mapped[Project] = relationship(back_populates="score_row")
+
+    __table_args__ = (
+        sa.Index("ix_project_scores_score", "score"),
+        sa.Index("ix_project_scores_tracking", "tracking_active", "last_checked_at"),
+    )
+
+
+class ProjectSnapshot(Base):
+    """One timestamped re-check observation; many per project, append-only (Feature 4).
+
+    Insert-only — the re-check loop appends exactly one row per project per cycle; nothing updates
+    or deletes a snapshot (constitution IV). The series forms the project's trajectory.
+    """
+
+    __tablename__ = "project_snapshots"
+
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(sa.ForeignKey("projects.id"), nullable=False)
+    captured_at: Mapped[object] = mapped_column(UtcDateTime, nullable=False, default=utcnow)
+    bids_count: Mapped[int | None] = mapped_column(sa.Integer)  # NULL if unknown / not-yet-calculated
+    site_status: Mapped[ProjectStatus] = mapped_column(
+        make_enum(ProjectStatus, "project_status"), nullable=False, default=ProjectStatus.unknown
+    )
+    score: Mapped[float | None] = mapped_column(sa.Float)  # score at this moment (frozen once closed)
+
+    project: Mapped[Project] = relationship(back_populates="snapshots")
+
+    __table_args__ = (
+        sa.Index("ix_project_snapshots_project_captured", "project_id", "captured_at"),
+    )
