@@ -111,6 +111,15 @@ DEFAULTS: dict[str, tuple[object, str]] = {
     "auto_status_personal_enabled": (False, "bool"),  # optional Interested→Expired/Missed
     # scraper marker — DOM/text markers for an awarded project (confined to scraper/mostaql.py)
     "awarded_markers": (["label-prj-awarded", "تم الترسية", "مسند"], "json"),
+    # analytics & insights (Feature 6) — read-only aggregation; every threshold tunable (constitution III)
+    "analytics_timezone": ("", "str"),                 # "" ⇒ follow owner_timezone; bad value ⇒ Africa/Cairo
+    "analytics_default_range_days": (90, "int"),        # default window when no range is chosen
+    "analytics_min_support": (30, "int"),              # min records before a section/tip is "enough"
+    "analytics_min_wins_support": (5, "int"),          # min wins before win-timing / threshold tips appear
+    "analytics_crowded_bids": (15, "int"),             # bid level the "gets crowded" headline refers to
+    "analytics_early_bids": (5, "int"),                # early bid level the "how fast to bid" tip refers to
+    "analytics_max_tips": (6, "int"),                  # cap on tips shown
+    "analytics_suggested_threshold_keep": (0.9, "float"),  # fraction of past wins a suggested threshold keeps
 }
 
 

@@ -58,6 +58,14 @@ REGISTRY_ORDER = [
     "top_default_count",
     "auto_status_site_enabled",
     "auto_status_personal_enabled",
+    # Feature 6 — analytics thresholds
+    "analytics_default_range_days",
+    "analytics_min_support",
+    "analytics_min_wins_support",
+    "analytics_crowded_bids",
+    "analytics_early_bids",
+    "analytics_max_tips",
+    "analytics_suggested_threshold_keep",
 ]
 
 # Default seeded values for the editable keys (from settings_store.DEFAULTS).
@@ -96,6 +104,13 @@ DEFAULTS = {
     "top_default_count": 5,
     "auto_status_site_enabled": True,
     "auto_status_personal_enabled": False,
+    "analytics_default_range_days": 90,
+    "analytics_min_support": 30,
+    "analytics_min_wins_support": 5,
+    "analytics_crowded_bids": 15,
+    "analytics_early_bids": 5,
+    "analytics_max_tips": 6,
+    "analytics_suggested_threshold_keep": 0.9,
 }
 
 TYPES = {
@@ -178,7 +193,7 @@ def test_get_returns_full_registry_in_order(api_env):
     r = client.get("/api/settings")
     assert r.status_code == 200
     items = r.json()["items"]
-    assert len(items) == len(REGISTRY_ORDER) == 34
+    assert len(items) == len(REGISTRY_ORDER) == 41
     assert [it["key"] for it in items] == REGISTRY_ORDER
     # registry order matches the spec tuple too
     assert [s.key for s in EDITABLE_SETTINGS] == REGISTRY_ORDER
