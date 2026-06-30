@@ -50,6 +50,7 @@ def create_app() -> FastAPI:
 
     # Auth routes are public (login/logout/status); data + settings routes are gated.
     from .routers import (
+        analytics,
         attachments,
         auth,
         board,
@@ -64,6 +65,8 @@ def create_app() -> FastAPI:
     app.include_router(projects.router, dependencies=[Depends(require_auth)])
     app.include_router(home.router, dependencies=[Depends(require_auth)])
     app.include_router(settings.router, dependencies=[Depends(require_auth)])
+    # Feature 6 — read-only analytics overview (auth-gated like every data route).
+    app.include_router(analytics.router, dependencies=[Depends(require_auth)])
     # Feature 3 — personal pipeline & workspace (all auth-gated).
     app.include_router(personal.router, dependencies=[Depends(require_auth)])
     app.include_router(board.router, dependencies=[Depends(require_auth)])
