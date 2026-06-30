@@ -1,0 +1,254 @@
+openapi: 3.0.3
+info:
+  title: Mostaql Notifier — Feature 6 API (analytics)
+  version: "0.6.0"
+  description: >
+    The single NEW HTTP endpoint added by Feature 6: a read-only analytics overview that aggregates
+    already-collected data (projects, scores, snapshots, outcomes, personal pipeline) into the
+    dashboard analytics section's charts and rule-based tips. Only this delta vs. Features 2–4 is
+    documented here.
+
+    AUTH: this endpoint sits behind the existing single-owner auth gate (signed session cookie
+    `mn_session`; bypassed only when DASHBOARD_AUTH_ENABLED=false). An unauthenticated request returns
+    401 with the standard ErrorBody. No new public surface is added (constitution IX).
+
+    Constitution: this is a strictly READ-ONLY projection — it triggers no scrape, no notification, and
+    NO write to any project / client / score / snapshot / outcome / personal row (IV, VIII). Every
+    section carries an `enough_data` flag and tips are withheld below their configurable minimum
+    support, so the section is honest under thin data and never shows an unsupported conclusion
+    (VI, VII). All time-of-day buckets are expressed in the configured analytics timezone (V).
+servers:
+  - url: http://localhost:8000
+    description: Local API (CORS limited to FRONTEND_ORIGIN)
+
+tags:
+  - name: analytics
+
+security:
+  - cookieAuth: []
+
+paths:
+  /api/analytics/overview:
+    get:
+      tags: [analytics]
+      summary: Read-only analytics overview (all sections + tips) for a date range
+      description: >
+        Returns the posting heatmap, volume trends, budget distribution, competition dynamics, outcome
+        analytics, the personal funnel, and the rule-based tips — computed at read time from existing
+        rows, scoped to an analytics-timezone calendar date range. Each section carries its own
+        `enough_data` flag (false ⇒ the UI shows "not enough data yet"). Tips below their configurable
+        minimum support are omitted from `tips`. Calling this endpoint changes NO data.
+      parameters:
+        - name: date_from
+          in: query
+          required: false
+          schema: { type: string, format: date }
+          description: >
+            Inclusive start of the window as a calendar date (YYYY-MM-DD) in the configured analytics
+            timezone. Omitted ⇒ `date_to` minus `analytics_default_range_days`.
+        - name: date_to
+          in: query
+          required: false
+          schema: { type: string, format: date }
+          description: >
+            Inclusive end of the window as a calendar date (YYYY-MM-DD) in the configured analytics
+            timezone. Omitted ⇒ today (analytics tz). The window is resolved server-side to a half-open
+            UTC range [local_midnight(date_from), local_midnight(date_to + 1 day)).
+      responses:
+        "200":
+          description: The analytics overview (every section + tips), each section honest about its support.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalyticsOverview" }
+        "401":
+          description: Not authenticated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+        "422":
+          description: Invalid date_from/date_to (unparseable date, or date_from after date_to).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+        "503":
+          description: Database unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: mn_session
+
+  schemas:
+    ErrorBody:
+      type: object
+      properties:
+        detail: { type: string }
+      required: [detail]
+
+    AnalyticsRange:
+      type: object
+      properties:
+        date_from: { type: string, format: date }
+        date_to: { type: string, format: date }
+        timezone: { type: string, example: "Africa/Cairo", description: "The resolved analytics timezone." }
+        default_applied: { type: boolean, description: "True when no range was supplied and the default window was used." }
+      required: [date_from, date_to, timezone, default_applied]
+
+    HeatmapCell:
+      type: object
+      properties:
+        weekday: { type: integer, minimum: 0, maximum: 6, description: "0=Saturday … 6=Friday (Arabic week order)." }
+        hour: { type: integer, minimum: 0, maximum: 23 }
+        count: { type: integer, minimum: 0 }
+      required: [weekday, hour, count]
+
+    PostingHeatmap:
+      type: object
+      description: When qualified projects are posted, day-of-week × hour-of-day, in the analytics timezone.
+      properties:
+        cells: { type: array, items: { $ref: "#/components/schemas/HeatmapCell" } }
+        weekday_labels: { type: array, items: { type: string }, description: "Arabic day names, index-aligned to weekday 0..6." }
+        total: { type: integer }
+        peak: { allOf: [ { $ref: "#/components/schemas/HeatmapCell" } ], nullable: true, description: "Densest cell, or null when below support." }
+        enough_data: { type: boolean }
+      required: [cells, weekday_labels, total, enough_data]
+
+    VolumePoint:
+      type: object
+      properties:
+        period: { type: string, description: "YYYY-MM-DD (by_day) or YYYY-Www (by_week)." }
+        total: { type: integer }
+        qualified: { type: integer }
+      required: [period, total, qualified]
+
+    VolumeTrends:
+      type: object
+      properties:
+        by_day: { type: array, items: { $ref: "#/components/schemas/VolumePoint" } }
+        by_week: { type: array, items: { $ref: "#/components/schemas/VolumePoint" } }
+        category: { type: string, example: "development" }
+        enough_data: { type: boolean }
+      required: [by_day, by_week, category, enough_data]
+
+    BudgetBucket:
+      type: object
+      properties:
+        lo: { type: number, nullable: true, description: "Lower USD bound; null with hi=null marks the unknown/partial-budget band." }
+        hi: { type: number, nullable: true }
+        count: { type: integer }
+      required: [count]
+
+    BudgetDistribution:
+      type: object
+      properties:
+        buckets: { type: array, items: { $ref: "#/components/schemas/BudgetBucket" } }
+        tier1_count: { type: integer }
+        tier2_count: { type: integer }
+        unknown_count: { type: integer }
+        total: { type: integer }
+        enough_data: { type: boolean }
+      required: [buckets, tier1_count, tier2_count, unknown_count, total, enough_data]
+
+    CompetitionPoint:
+      type: object
+      properties:
+        age_lo_h: { type: number }
+        age_hi_h: { type: number }
+        median: { type: number }
+        p25: { type: number }
+        p75: { type: number }
+        n: { type: integer }
+      required: [age_lo_h, age_hi_h, median, p25, p75, n]
+
+    CompetitionDynamics:
+      type: object
+      description: How bids grow with project age (median curve from real trajectories) + bidding-by-hour.
+      properties:
+        age_curve: { type: array, items: { $ref: "#/components/schemas/CompetitionPoint" } }
+        crowded_bids: { type: integer, description: "Echo of analytics_crowded_bids." }
+        crowded_after_hours: { type: number, nullable: true, description: "Age at which the median first reaches crowded_bids; null if never." }
+        headline: { type: string, description: "Plain-Arabic answer to how long before a project gets crowded." }
+        by_hour: { type: array, items: { type: integer }, minItems: 24, maxItems: 24, description: "Summed positive bid deltas per analytics-tz hour 0..23." }
+        enough_data: { type: boolean }
+      required: [age_curve, crowded_bids, headline, by_hour, enough_data]
+
+    TimeToClose:
+      type: object
+      properties:
+        mean: { type: number, nullable: true }
+        median: { type: number, nullable: true }
+        p25: { type: number, nullable: true }
+        p75: { type: number, nullable: true }
+
+    MissedProject:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: string, nullable: true }
+        url: { type: string, nullable: true }
+        budget_usd: { type: number, nullable: true }
+      required: [id]
+
+    OutcomeAnalytics:
+      type: object
+      description: Of concluded qualified projects, hired vs no-hire shares, time-to-close, and missed opportunities.
+      properties:
+        hired_count: { type: integer }
+        no_hire_count: { type: integer }
+        unknown_count: { type: integer, description: "Ambiguous endings — shown honestly, never counted as hires." }
+        open_count: { type: integer, description: "Still-open — excluded from the shares (context only)." }
+        hired_share: { type: number, nullable: true, description: "hired / (hired + no_hire); null below support." }
+        no_hire_share: { type: number, nullable: true }
+        time_to_close_hours: { $ref: "#/components/schemas/TimeToClose" }
+        missed: { type: array, items: { $ref: "#/components/schemas/MissedProject" } }
+        missed_count: { type: integer, description: "Hired projects the owner never applied to." }
+        enough_data: { type: boolean }
+      required: [hired_count, no_hire_count, unknown_count, open_count, time_to_close_hours, missed, missed_count, enough_data]
+
+    FunnelStage:
+      type: object
+      properties:
+        key: { type: string, enum: [seen, favourited, applied, in_discussion, won] }
+        label: { type: string, description: "Arabic stage label." }
+        count: { type: integer }
+        conv_from_prev: { type: number, nullable: true, description: "stage / previous stage; null for the base stage or a zero denominator." }
+        lag_median_hours: { type: number, nullable: true, description: "Median lag into this stage; null when not derivable from retained timestamps." }
+      required: [key, label, count]
+
+    Funnel:
+      type: object
+      description: Monotonic personal funnel seen → favourited → applied → in_discussion → won.
+      properties:
+        stages: { type: array, items: { $ref: "#/components/schemas/FunnelStage" } }
+        seen: { type: integer }
+        enough_data: { type: boolean }
+      required: [stages, seen, enough_data]
+
+    Tip:
+      type: object
+      properties:
+        key: { type: string, enum: [peak_window, bid_speed, win_timing, score_threshold, budget_fallback] }
+        text: { type: string, description: "A single plain-Arabic, actionable sentence." }
+        evidence: { type: object, additionalProperties: true, description: "The figures behind the tip (for display + audit)." }
+      required: [key, text, evidence]
+
+    AnalyticsOverview:
+      type: object
+      properties:
+        range: { $ref: "#/components/schemas/AnalyticsRange" }
+        heatmap: { $ref: "#/components/schemas/PostingHeatmap" }
+        volume: { $ref: "#/components/schemas/VolumeTrends" }
+        budget: { $ref: "#/components/schemas/BudgetDistribution" }
+        competition: { $ref: "#/components/schemas/CompetitionDynamics" }
+        outcomes: { $ref: "#/components/schemas/OutcomeAnalytics" }
+        funnel: { $ref: "#/components/schemas/Funnel" }
+        tips:
+          type: array
+          items: { $ref: "#/components/schemas/Tip" }
+          description: "Ranked, length ≤ analytics_max_tips; tips below their minimum support are omitted entirely."
+      required: [range, heatmap, volume, budget, competition, outcomes, funnel, tips]

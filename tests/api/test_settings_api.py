@@ -44,6 +44,14 @@ _EXPECTED_KEYS = {
     "top_default_count",
     "auto_status_site_enabled",
     "auto_status_personal_enabled",
+    # Feature 6 — analytics thresholds
+    "analytics_default_range_days",
+    "analytics_min_support",
+    "analytics_min_wins_support",
+    "analytics_crowded_bids",
+    "analytics_early_bids",
+    "analytics_max_tips",
+    "analytics_suggested_threshold_keep",
 }
 
 
@@ -57,7 +65,7 @@ def test_get_settings_returns_full_registry_with_metadata(api_env):
     client = api_env.client(auth_enabled=False)
     body = client.get("/api/settings").json()
     items = body["items"]
-    assert len(items) == len(_EXPECTED_KEYS) == 34
+    assert len(items) == len(_EXPECTED_KEYS) == 41
     assert {it["key"] for it in items} == _EXPECTED_KEYS
     for it in items:
         for field in ("key", "value", "type", "min", "max", "label"):

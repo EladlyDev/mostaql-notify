@@ -1,4 +1,5 @@
 import type {
+  AnalyticsOverview,
   AttachmentItem,
   AttachmentListResponse,
   AuthStatus,
@@ -181,6 +182,16 @@ export function revertAutoStatus(
 
 export function getHome(): Promise<HomeOverview> {
   return apiFetch<HomeOverview>("/api/home");
+}
+
+// ---------------------------------------------------------------------------
+// Feature 6 — read-only analytics overview (all sections + tips for a date range)
+// ---------------------------------------------------------------------------
+
+export function getAnalyticsOverview(
+  params: Record<string, string | number | boolean | undefined> = {}
+): Promise<AnalyticsOverview> {
+  return apiFetch<AnalyticsOverview>(`/api/analytics/overview${buildQuery(params)}`);
 }
 
 export function getSettings(): Promise<SettingsResponse> {

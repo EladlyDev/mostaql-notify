@@ -20,6 +20,25 @@ liveness.
 See [`specs/001-watch-notify-loop/`](specs/001-watch-notify-loop/) for the full spec, plan, data model,
 and contracts, and [`quickstart.md`](specs/001-watch-notify-loop/quickstart.md) to set up and run.
 
+## Dashboard (Features 2–6)
+
+A local Next.js dashboard over the same SQLite DB (FastAPI backend, signed-cookie auth) lets you browse
+and tune the watcher, manage a personal pipeline (favourites, statuses, a Kanban board, notes/files),
+score every qualified project, and watch each one over time. Its tabs: **الرئيسية** (home), **المشاريع**
+(projects), **اللوحة** (board), **التحليلات** (analytics), **الإعدادات** (settings).
+
+**التحليلات — analytics & insights (Feature 6).** A **strictly read-only** analytics section that
+aggregates the already-collected history into charts and rule-based plain-language tips: a posting
+heatmap (day×hour, in a configurable analytics timezone), volume trends, budget distribution + Tier-1/2
+split, competition dynamics (a median bids-vs-age curve answering "how long before it gets crowded"),
+outcome analytics (hired vs no-hire, time-to-close, **hired projects you never applied to**), a personal
+funnel (seen → favourited → applied → discussion → won), and a handful of honest, support-gated tips. It
+**scrapes nothing and writes nothing back** — every chart and tip is computed at read time from existing
+rows — so it adds **no new process, no Alembic migration, and no new dependency**; the only new state is a
+few `analytics_*` `settings` rows. Each section is upfront about thin data ("لا توجد بيانات كافية بعد")
+and a single date-range filter scopes every chart and tip. See
+[`specs/006-analytics-insights/`](specs/006-analytics-insights/).
+
 ## Quick start
 
 ```bash

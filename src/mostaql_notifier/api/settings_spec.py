@@ -64,6 +64,17 @@ EDITABLE_SETTINGS: tuple[SettingSpec, ...] = (
     SettingSpec("top_default_count", "int", 1, 20, "عدد المشاريع الافتراضي في /top"),
     SettingSpec("auto_status_site_enabled", "bool", None, None, "مزامنة حالة مستقل تلقائيًا"),
     SettingSpec("auto_status_personal_enabled", "bool", None, None, "نقل تلقائي: مهتم ← منتهي/فائت"),
+    # --- Feature 6: analytics & insights thresholds (the str ``analytics_timezone`` is DB-edit
+    # only, like ``owner_timezone`` — not registered here). ---
+    SettingSpec("analytics_default_range_days", "int", 1, None, "المدى الزمني الافتراضي (أيام)"),
+    SettingSpec("analytics_min_support", "int", 1, None, "الحد الأدنى للبيانات قبل إظهار التحليل"),
+    SettingSpec("analytics_min_wins_support", "int", 1, None,
+                "الحد الأدنى لعدد الصفقات الرابحة قبل نصائح الفوز"),
+    SettingSpec("analytics_crowded_bids", "int", 1, None, 'عدد العروض الذي يعتبر "مزدحمًا"'),
+    SettingSpec("analytics_early_bids", "int", 1, None, "عدد العروض المبكّر"),
+    SettingSpec("analytics_max_tips", "int", 1, 20, "أقصى عدد للنصائح"),
+    SettingSpec("analytics_suggested_threshold_keep", "float", 0, 1,
+                "نسبة الصفقات الرابحة المحتفظ بها عند اقتراح حد التقييم"),
 )
 
 EDITABLE_BY_KEY: dict[str, SettingSpec] = {s.key: s for s in EDITABLE_SETTINGS}

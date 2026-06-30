@@ -5,9 +5,9 @@ Projection over Feature 1's ORM entities — no schema change. Missing numerics 
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AuthStatus(BaseModel):
@@ -301,3 +301,144 @@ class ErrorBody(BaseModel):
 
 # Resolve the forward reference ProjectDetail -> PersonalRecord now that both are defined.
 ProjectDetail.model_rebuild()
+
+
+# ---------------------------------------------------------------------------
+# Feature 6 — analytics overview DTOs (read-only; mirror contracts/openapi.yaml).
+# Computed projections, not ORM rows → NO ``from_attributes``. Not-calculated numerics are
+# ``| None = None`` (never coerced to 0); every section carries an ``enough_data`` flag so the UI
+# is honest under thin data.
+# ---------------------------------------------------------------------------
+
+
+class AnalyticsRange(BaseModel):
+    """The resolved analytics window echoed back to the client."""
+
+    date_from: date
+    date_to: date
+    timezone: str  # the resolved analytics tz (e.g. "Africa/Cairo")
+    default_applied: bool  # true when no range was supplied and the default window was used
+
+
+class HeatmapCell(BaseModel):
+    weekday: int  # 0=Saturday … 6=Friday (Arabic week order)
+    hour: int     # 0..23
+    count: int
+
+
+class PostingHeatmap(BaseModel):
+    cells: list[HeatmapCell] = []
+    weekday_labels: list[str] = []  # Arabic day names, index-aligned to weekday 0..6
+    total: int = 0
+    peak: HeatmapCell | None = None  # densest cell; null when below support
+    enough_data: bool = False
+
+
+class VolumePoint(BaseModel):
+    period: str  # "YYYY-MM-DD" (by_day) or "YYYY-Www" (by_week)
+    total: int
+    qualified: int
+
+
+class VolumeTrends(BaseModel):
+    by_day: list[VolumePoint] = []
+    by_week: list[VolumePoint] = []
+    category: str = ""  # the configured slug; today a single category ("development")
+    enough_data: bool = False
+
+
+class BudgetBucket(BaseModel):
+    lo: float | None = None  # lower USD bound; lo=hi=null marks the unknown/partial-budget band
+    hi: float | None = None
+    count: int
+
+
+class BudgetDistribution(BaseModel):
+    buckets: list[BudgetBucket] = []
+    tier1_count: int = 0
+    tier2_count: int = 0
+    unknown_count: int = 0
+    total: int = 0
+    enough_data: bool = False
+
+
+class CompetitionPoint(BaseModel):
+    age_lo_h: float
+    age_hi_h: float
+    median: float
+    p25: float
+    p75: float
+    n: int
+
+
+class CompetitionDynamics(BaseModel):
+    age_curve: list[CompetitionPoint] = []
+    crowded_bids: int = 0  # echo of analytics_crowded_bids
+    crowded_after_hours: float | None = None  # age at which the median first reaches crowded_bids
+    headline: str = ""  # plain-Arabic answer to "how long before a project gets crowded"
+    by_hour: list[int] = []  # length 24: summed positive bid deltas per analytics-tz hour
+    enough_data: bool = False
+
+
+class TimeToClose(BaseModel):
+    mean: float | None = None
+    median: float | None = None
+    p25: float | None = None
+    p75: float | None = None
+
+
+class MissedProject(BaseModel):
+    id: int
+    title: str | None = None
+    url: str | None = None
+    budget_usd: float | None = None
+
+
+class OutcomeAnalytics(BaseModel):
+    hired_count: int = 0
+    no_hire_count: int = 0
+    unknown_count: int = 0  # ambiguous endings — shown honestly, never counted as hires
+    open_count: int = 0     # still-open — excluded from the shares (context only)
+    hired_share: float | None = None  # hired / (hired + no_hire); null below support
+    no_hire_share: float | None = None
+    time_to_close_hours: TimeToClose = Field(default_factory=TimeToClose)
+    missed: list[MissedProject] = []  # hired projects the owner never applied to
+    missed_count: int = 0
+    enough_data: bool = False
+
+
+class FunnelStage(BaseModel):
+    key: str  # seen | favourited | applied | in_discussion | won
+    label: str  # Arabic stage label
+    count: int
+    conv_from_prev: float | None = None  # stage / previous stage; null for base / zero denominator
+    lag_median_hours: float | None = None  # median lag into this stage; null when not derivable
+
+
+class Funnel(BaseModel):
+    stages: list[FunnelStage] = []
+    seen: int = 0
+    enough_data: bool = False
+
+
+class Tip(BaseModel):
+    key: str  # peak_window | bid_speed | win_timing | score_threshold | budget_fallback
+    text: str  # a single plain-Arabic, actionable sentence
+    evidence: dict = {}  # the figures behind the tip (for display + audit)
+
+
+class AnalyticsOverview(BaseModel):
+    """Response of ``GET /api/analytics/overview`` — every section + the ranked tips."""
+
+    range: AnalyticsRange
+    heatmap: PostingHeatmap
+    volume: VolumeTrends
+    budget: BudgetDistribution
+    competition: CompetitionDynamics
+    outcomes: OutcomeAnalytics
+    funnel: Funnel
+    tips: list[Tip] = []  # ranked, length ≤ analytics_max_tips; below-support tips omitted entirely
+
+
+# Resolve forward references among the freshly-defined analytics DTOs.
+AnalyticsOverview.model_rebuild()
