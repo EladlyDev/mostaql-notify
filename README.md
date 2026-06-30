@@ -27,10 +27,17 @@ python3.11 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'            # add ',fallback' for the Playwright fallback
 cp .env.example .env               # fill TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 alembic upgrade head               # create the schema (settings seed on first start)
-python -m mostaql_notifier         # start the worker
+python -m mostaql_notifier         # 1) the worker: poll + re-check + OUTBOUND Telegram
+python -m mostaql_notifier.bot     # 2) the inbound bot: inline-button taps + /commands
 # verify Telegram wiring without scraping:
 python -m mostaql_notifier.notify.selfcheck
 ```
+
+> **Two processes, not one.** `python -m mostaql_notifier` is outbound-only — it sends
+> notifications but does **not** consume `getUpdates`. The inline action buttons (★ favourite, ✅
+> applied, 🙈 dismiss, 📝 note, Why?) and the owner commands (`/find /pause /resume /health /stats
+> /top`) are handled by the **separate** `python -m mostaql_notifier.bot` process. If the buttons
+> spin forever, this process isn't running. Run both (e.g. two `systemd` units).
 
 All tunables live in the `settings` table (seeded on first run) — edit rows to retune without a redeploy
 (see [`data-model.md`](specs/001-watch-notify-loop/data-model.md)). Secrets live only in `.env`.
