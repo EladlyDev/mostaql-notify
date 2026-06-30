@@ -6,9 +6,12 @@ rather than a guess — but a *structural* surprise (missing meta rows or hiring
 site changed shape) raises :class:`ParseError` so the caller fails loud instead of silently
 mis-parsing.
 
-Selectors verified against tests/fixtures/* on 2026-06-23. The real project page renders two copies
-of the meta block (a desktop ``#project-meta-panel`` and a ``#mobile-project-meta-panel``); we scope
-to the first occurrence of each label to avoid double-counting.
+Selectors verified against tests/fixtures/* on 2026-06-23; the bids-count and description selectors
+were corrected against the live site on 2026-06-30 (the originals were synthetic-fixture-only and
+silently yielded ``None`` on every real page — see ``_parse_bids_count`` / ``_parse_description``).
+The real project page renders two copies of the meta block (a desktop ``#project-meta-panel`` and a
+``#mobile-project-meta-panel``); we scope to the first occurrence of each label to avoid
+double-counting.
 """
 from __future__ import annotations
 
@@ -50,8 +53,11 @@ class ParseError(Exception):
 def parse_listing(html: str) -> list[dict]:
     """Discover projects from a listing page.
 
-    Each dict: ``{"mostaql_id", "url", "title", "client_name"}``. Rows whose link has no numeric
-    ``/project/<id>`` are skipped (fail-closed: an unidentifiable row is no project at all).
+    Each dict: ``{"mostaql_id", "url", "title", "client_name", "bids_count"}``. Rows whose link has
+    no numeric ``/project/<id>`` are skipped (fail-closed: an unidentifiable row is no project at
+    all). ``bids_count`` is the listing's offer count — the **authoritative, uncapped total**: the
+    project detail page only renders the first 50 offer cards, so for heavily-bid projects the
+    listing is the only place the true count appears (see ``_parse_bids_count``).
     """
     tree = HTMLParser(html)
     out: list[dict] = []
@@ -70,9 +76,53 @@ def parse_listing(html: str) -> list[dict]:
                 "url": href,
                 "title": title,
                 "client_name": _listing_client_name(row),
+                "bids_count": _listing_bids_count(row),
             }
         )
     return out
+
+
+# Listing offer count: "<n> عرض/عروض" (digit forms) plus the Arabic singular/dual word forms that
+# carry no digit at all ("عرض واحد" = 1, "عرضان"/"عرضين" = 2).
+_BIDS_DIGIT_RE = re.compile(r"(\d+)\s*عر")
+
+
+def _parse_listing_bids(text: str) -> int | None:
+    t = normalize_text(text)
+    m = _BIDS_DIGIT_RE.search(t)
+    if m is not None:
+        return int(m.group(1))
+    if "عرضان" in t or "عرضين" in t:
+        return 2
+    if "عرض واحد" in t:
+        return 1
+    return None
+
+
+def _listing_bids_count(row: Node) -> int | None:
+    """The offer-count ``li`` under ``ul.project__meta`` -> its integer count (``None`` if absent)."""
+    for ul in row.css("ul.project__meta"):
+        for li in ul.css("li"):
+            text = normalize_text(li.text())
+            if "عرض" in text or "عرو" in text:
+                n = _parse_listing_bids(text)
+                if n is not None:
+                    return n
+    return None
+
+
+def merge_bids_count(observed: int | None, existing: int | None) -> int | None:
+    """Combine a freshly-observed bid count with the stored one, never downgrading.
+
+    The detail page caps its offer cards at 50, so a re-check of a >50-bid project would otherwise
+    overwrite an authoritative (uncapped) listing total with ``50``. Bids on an open project only
+    grow in practice, so we keep the larger of the two (None-safe: a missing side never wins).
+    """
+    if observed is None:
+        return existing
+    if existing is None:
+        return observed
+    return max(observed, existing)
 
 
 def _listing_client_name(row: Node) -> str | None:
@@ -256,8 +306,19 @@ def _parse_skills(tree: HTMLParser, value: Node | None) -> list[str]:
 
 
 def _parse_description(tree: HTMLParser) -> str | None:
-    node = tree.css_first('div[data-type="project-details"]') or tree.css_first(
-        "div.project-brief, div.text-wrapper-h"
+    """The project brief.
+
+    On the live page the brief renders inside the ``تفاصيل المشروع`` card as
+    ``#project-brief > #projectDetailsTab > div.text-wrapper-div`` (verified against the live
+    site 2026-06-30). The older ``div[data-type="project-details"]`` / ``div.project-brief`` /
+    ``div.text-wrapper-h`` selectors were synthetic-fixture-only and never matched a real page;
+    they are kept *after* the real ones as a fail-soft fallback for those fixtures.
+    """
+    node = (
+        tree.css_first("#projectDetailsTab div.text-wrapper-div")
+        or tree.css_first("#project-brief div.text-wrapper-div")
+        or tree.css_first('div[data-type="project-details"]')
+        or tree.css_first("div.project-brief, div.text-wrapper-h")
     )
     if node is None:
         return None
@@ -266,7 +327,21 @@ def _parse_description(tree: HTMLParser) -> str | None:
 
 
 def _parse_bids_count(tree: HTMLParser) -> int | None:
-    """Best-effort: a number near "عرض"/"عروض". ``None`` when nothing matches."""
+    """Number of public bids/offers on the project.
+
+    On the live page every submitted offer is a ``[data-bid-item]`` card inside
+    ``#bidsCollection-panel`` — there is no count badge or "showing N of M" text. The card count
+    is therefore a **lower bound**: it is exact up to 50 but the page renders at most 50 cards
+    (verified against the live site 2026-06-30 — a 79-bid project shows exactly 50 cards and the
+    true total appears nowhere on the page). The uncapped total only lives on the listing, so
+    callers merge this with ``parse_listing``'s count via :func:`merge_bids_count`. When the panel
+    is present we return the card count; ``0`` is a real value (a project with no offers yet),
+    distinct from ``None`` (panel absent ⇒ unknown). The legacy ``span.count`` digit is kept as a
+    fail-soft fallback for the synthetic qualifying fixture.
+    """
+    panel = tree.css_first("#bidsCollection-panel") or tree.css_first("#project-bids")
+    if panel is not None:
+        return len(panel.css("[data-bid-item]"))
     count = tree.css_first("span.count")
     if count is not None:
         digits = re.search(r"\d+", normalize_text(count.text()))

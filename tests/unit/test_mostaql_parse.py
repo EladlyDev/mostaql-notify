@@ -110,6 +110,23 @@ def test_parse_project_real_skills_are_deduped_list():
     assert "PHP" in skills
 
 
+def test_parse_project_real_bids_count():
+    # The real page carries one [data-bid-item] card per public offer inside
+    # #bidsCollection-panel; this fixture has exactly 8. (Regression guard: the old
+    # span.count selector silently returned None on every real page.)
+    p = parse_project_page(read_fixture("project_page.html"))
+    assert p["bids_count"] == 8
+
+
+def test_parse_project_real_description_is_nonempty_text():
+    # Description lives in #projectDetailsTab > div.text-wrapper-div on the real page.
+    p = parse_project_page(read_fixture("project_page.html"))
+    desc = p["description"]
+    assert isinstance(desc, str)
+    assert len(desc) > 50
+    assert "flutter" in desc.lower()
+
+
 # ---------------------------------------------------------------------------
 # parse_project_page — synthetic qualifying fixture
 # ---------------------------------------------------------------------------

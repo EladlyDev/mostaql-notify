@@ -22,6 +22,7 @@ from mostaql_notifier.db.models import ProjectStatus
 from mostaql_notifier.db.types import utcnow
 from mostaql_notifier.scraper.mostaql import (
     ParseError,
+    merge_bids_count,
     parse_listing,
     parse_profile_page,
     parse_project_page,
@@ -112,6 +113,80 @@ def test_listing_mixed_skips_keep_only_identifiable_rows():
 def test_listing_empty_html_yields_empty_list():
     assert parse_listing("<html><body></body></html>") == []
     assert parse_listing("") == []
+
+
+def _listing_row_with_meta(meta_li: str, project_id: str = "55") -> str:
+    return _wrap_rows(
+        f'<tr class="project-row"><td>'
+        f'<h2><a href="/project/{project_id}-x">T</a></h2>'
+        f'<ul class="project__meta">{meta_li}</ul>'
+        f"</td></tr>"
+    )
+
+
+def test_listing_bids_count_digit_form_plural():
+    rows = parse_listing(_listing_row_with_meta("<li>8 عروض</li>"))
+    assert rows[0]["bids_count"] == 8
+
+
+def test_listing_bids_count_digit_form_singular_word_unit():
+    """'13 عرض' (digit + singular noun) -> 13."""
+    rows = parse_listing(_listing_row_with_meta("<li>13 عرض</li>"))
+    assert rows[0]["bids_count"] == 13
+
+
+def test_listing_bids_count_arabic_dual_word_is_two():
+    """'عرضان' (grammatical dual, no digit) -> 2."""
+    rows = parse_listing(_listing_row_with_meta("<li>عرضان</li>"))
+    assert rows[0]["bids_count"] == 2
+
+
+def test_listing_bids_count_single_word_is_one():
+    """'عرض واحد' (no digit) -> 1."""
+    rows = parse_listing(_listing_row_with_meta("<li>عرض واحد</li>"))
+    assert rows[0]["bids_count"] == 1
+
+
+def test_listing_bids_count_arabic_indic_digits():
+    rows = parse_listing(_listing_row_with_meta("<li>٤٤ عرض</li>"))
+    assert rows[0]["bids_count"] == 44
+
+
+def test_listing_bids_count_none_when_no_offers_li():
+    rows = parse_listing(
+        _listing_row_with_meta('<li><i class="fa fa-user"></i> <bdi>Acme</bdi></li>')
+    )
+    assert rows[0]["bids_count"] is None
+
+
+def test_listing_bids_count_uncapped_above_50():
+    """The listing total is uncapped (the detail page is what caps at 50)."""
+    rows = parse_listing(_listing_row_with_meta("<li>79 عرض</li>"))
+    assert rows[0]["bids_count"] == 79
+
+
+# ===========================================================================
+# merge_bids_count — never downgrade a known (uncapped) total
+# ===========================================================================
+
+
+def test_merge_bids_prefers_larger():
+    # detail capped at 50, listing knew the true 79 -> keep 79
+    assert merge_bids_count(50, 79) == 79
+    assert merge_bids_count(79, 50) == 79
+
+
+def test_merge_bids_none_safe():
+    assert merge_bids_count(None, 12) == 12
+    assert merge_bids_count(12, None) == 12
+    assert merge_bids_count(None, None) is None
+
+
+def test_merge_bids_zero_is_a_real_value():
+    # a freshly-discovered project with 0 detail cards and no prior knowledge -> 0
+    assert merge_bids_count(0, None) == 0
+    # but a known higher total is never downgraded to 0
+    assert merge_bids_count(0, 7) == 7
 
 
 def test_listing_id_is_first_numeric_run_in_href():
@@ -498,6 +573,37 @@ def test_description_from_text_wrapper_h_fallback():
     assert p["description"] == "Wrapper fallback text"
 
 
+def test_description_from_project_details_tab_real_selector():
+    """Live page: #projectDetailsTab > div.text-wrapper-div holds the brief."""
+    extra_body = (
+        '<div id="project-brief"><div id="projectDetailsTab">'
+        '<div class="text-wrapper-div carda__content"><p>Real brief body</p></div>'
+        "</div></div>"
+    )
+    p = parse_project_page(_project_html(extra_body=extra_body))
+    assert p["description"] == "Real brief body"
+
+
+def test_description_from_project_brief_scoped_text_wrapper_div():
+    """#project-brief scope (without the inner tab id) still finds the wrapper."""
+    extra_body = (
+        '<div id="project-brief">'
+        '<div class="text-wrapper-div"><p>Scoped brief</p></div></div>'
+    )
+    p = parse_project_page(_project_html(extra_body=extra_body))
+    assert p["description"] == "Scoped brief"
+
+
+def test_description_real_selector_wins_over_legacy_data_type():
+    """When both the real wrapper and a legacy node exist, the real one wins."""
+    extra_body = (
+        '<div id="projectDetailsTab"><div class="text-wrapper-div">Real</div></div>'
+        '<div data-type="project-details">Legacy</div>'
+    )
+    p = parse_project_page(_project_html(extra_body=extra_body))
+    assert p["description"] == "Real"
+
+
 def test_description_none_when_no_matching_node():
     p = parse_project_page(_project_html())
     assert p["description"] is None
@@ -515,8 +621,50 @@ def test_description_empty_node_normalises_to_none():
 # ===========================================================================
 
 
+def _bids_panel(n: int, *, panel_id: str = "bidsCollection-panel") -> str:
+    """A #bidsCollection-panel with `n` [data-bid-item] offer cards (real-page shape)."""
+    cards = "".join(
+        f'<div class="bid list-group-item" data-bid-item="{1000 + i}" id="bid{1000 + i}">'
+        f"offer {i}</div>"
+        for i in range(n)
+    )
+    return f'<div id="project-bids"><div id="{panel_id}">{cards}</div></div>'
+
+
+def test_bids_count_from_bid_item_cards_panel():
+    """Live page: bids = count of [data-bid-item] cards in #bidsCollection-panel."""
+    p = parse_project_page(_project_html(extra_body=_bids_panel(7)))
+    assert p["bids_count"] == 7
+
+
+def test_bids_count_panel_present_but_empty_is_zero_not_none():
+    """A rendered-but-empty offers panel means 0 bids (a real value), not unknown."""
+    p = parse_project_page(_project_html(extra_body=_bids_panel(0)))
+    assert p["bids_count"] == 0
+
+
+def test_bids_count_panel_wins_over_legacy_span_count():
+    """When both the real panel and a stray span.count exist, the card count wins."""
+    extra_body = _bids_panel(5) + '<span class="count">99 عروض</span>'
+    p = parse_project_page(_project_html(extra_body=extra_body))
+    assert p["bids_count"] == 5
+
+
+def test_bids_count_counts_cards_via_project_bids_outer_fallback():
+    """If the inner panel id differs, #project-bids still scopes the card count."""
+    extra_body = _bids_panel(3, panel_id="someOtherId")
+    p = parse_project_page(_project_html(extra_body=extra_body))
+    assert p["bids_count"] == 3
+
+
+def test_bids_count_high_volume_no_pagination():
+    """44-bid project renders all cards server-side (no pagination/cap) -> exact count."""
+    p = parse_project_page(_project_html(extra_body=_bids_panel(44)))
+    assert p["bids_count"] == 44
+
+
 def test_bids_count_arabic_indic_digits():
-    """<span class="count">٤ عروض</span> -> 4."""
+    """<span class="count">٤ عروض</span> -> 4 (legacy fallback when no panel)."""
     p = parse_project_page(
         _project_html(extra_body='<span class="count">٤ عروض</span>')
     )
