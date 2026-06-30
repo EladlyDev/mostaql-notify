@@ -23,7 +23,7 @@ from ..db.types import utcnow
 from ..notify.format import build_project_keyboard
 from ..qualify.budget_policy import load_policy, recompute_floor, save_policy
 from ..qualify.filters import qualify
-from ..scraper.mostaql import parse_listing, parse_project_page
+from ..scraper.mostaql import merge_bids_count, parse_listing, parse_project_page
 from ..worker.circuit_breaker import (
     CircuitBreaker,
     Classification,
@@ -90,6 +90,7 @@ async def run_poll_cycle(session, fetcher, sender, settings, *, now=None) -> Scr
             session.add(Project(
                 mostaql_id=row["mostaql_id"], url=row.get("url"),
                 title=row.get("title"), category=settings.get_str("category_slug"),
+                bids_count=row.get("bids_count"),  # authoritative uncapped listing total
                 site_status=ProjectStatus.unknown, eval_status=EvalStatus.baseline,
                 scraped_at=now, raw={"listing": row},
             ))
@@ -107,6 +108,7 @@ async def run_poll_cycle(session, fetcher, sender, settings, *, now=None) -> Scr
             session.add(Project(
                 mostaql_id=row["mostaql_id"], url=row.get("url"),
                 title=row.get("title"), category=settings.get_str("category_slug"),
+                bids_count=row.get("bids_count"),  # authoritative uncapped listing total
                 site_status=ProjectStatus.unknown, eval_status=EvalStatus.pending,
                 scraped_at=now, raw={"listing": row},
             ))
@@ -242,7 +244,8 @@ async def _evaluate_project(session, fetcher, sender, settings, breaker, run, pr
     project.budget_min = _dec(data.get("budget_min"))
     project.budget_max = _dec(data.get("budget_max"))
     project.currency = data.get("currency")
-    project.bids_count = data.get("bids_count")
+    # Detail-page bids cap at 50 cards; keep the larger of it and the (uncapped) listing total.
+    project.bids_count = merge_bids_count(data.get("bids_count"), project.bids_count)
     project.posted_at = data.get("posted_at")
     project.site_status = data.get("site_status") or ProjectStatus.unknown
     project.raw = {**(project.raw or {}), "project": data.get("raw", {})}

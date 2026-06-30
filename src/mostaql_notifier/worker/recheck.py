@@ -31,7 +31,7 @@ from ..db.models import (
 )
 from ..db.types import utcnow
 from ..scoring import service as score_service
-from ..scraper.mostaql import parse_project_page
+from ..scraper.mostaql import merge_bids_count, parse_project_page
 from ..worker.circuit_breaker import CircuitBreaker, Classification, classify_response
 from ..worker.politeness import polite_delay
 from ..worker.poll import _finish_blocked, _safe_alert
@@ -167,7 +167,8 @@ async def _recheck_one(
     _maybe_refresh_client(session, project, data, settings, now)
 
     # Always-on Mostaql sync (FR-026): the page is the single source of truth for bids + status.
-    project.bids_count = data.get("bids_count")
+    # The detail page caps offer cards at 50, so never downgrade a known (uncapped) listing total.
+    project.bids_count = merge_bids_count(data.get("bids_count"), project.bids_count)
     project.site_status = data.get("site_status") or ProjectStatus.unknown
 
     score_row = session.get(ProjectScore, project.id)
