@@ -99,6 +99,21 @@ const GROUPS: { id: string; title: string; description: string; keys: string[] }
       description: "مزامنة الحالة تلقائيًا من حلقة المتابعة.",
       keys: ["auto_status_site_enabled", "auto_status_personal_enabled"],
     },
+    {
+      id: "analytics",
+      title: "التحليلات",
+      description:
+        "عتبات قسم التحليلات والنصائح (تُطبَّق عند التحديث التالي، بلا إعادة احتساب).",
+      keys: [
+        "analytics_default_range_days",
+        "analytics_min_support",
+        "analytics_min_wins_support",
+        "analytics_crowded_bids",
+        "analytics_early_bids",
+        "analytics_max_tips",
+        "analytics_suggested_threshold_keep",
+      ],
+    },
   ];
 
 // Short Arabic helper/unit text keyed by setting key. Optional — absent keys
@@ -144,6 +159,15 @@ const HINTS: Record<string, string> = {
   top_default_count: "عدد المشاريع الافتراضي لأمر /top (١–٢٠).",
   auto_status_site_enabled: "مزامنة حالة مستقل تلقائيًا من حلقة المتابعة.",
   auto_status_personal_enabled: "تحويل «مهتم» إلى «منتهي/فائت» تلقائيًا عند الإغلاق.",
+  // Analytics thresholds.
+  analytics_default_range_days: "المدى الزمني الافتراضي للتحليلات بالأيام.",
+  analytics_min_support: "أقل عدد من السجلات قبل إظهار تحليل أو نصيحة.",
+  analytics_min_wins_support: "أقل عدد من الصفقات الرابحة قبل ظهور نصائح الفوز.",
+  analytics_crowded_bids: "عدد العروض الذي يُعتبر عنده المشروع «مزدحمًا».",
+  analytics_early_bids: "عدد العروض «المبكّر» الذي تشير إليه نصيحة سرعة التقديم.",
+  analytics_max_tips: "أقصى عدد من النصائح المعروضة (١–٢٠).",
+  analytics_suggested_threshold_keep:
+    "نسبة الصفقات الرابحة التي يحتفظ بها حدّ التقييم المقترح (٠–١).",
 };
 
 type FieldErrors = Record<string, string>;

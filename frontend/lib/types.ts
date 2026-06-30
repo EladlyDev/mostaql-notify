@@ -240,3 +240,133 @@ export interface SettingsValidationError {
   detail: string;
   errors: { key: string; message: string }[];
 }
+
+// ---------------------------------------------------------------------------
+// Feature 6 — analytics & insights DTOs (read-only; mirror api/schemas.py).
+// snake_case fields, nullable as `| null`; weekday/hour are plain ints.
+// ---------------------------------------------------------------------------
+
+export interface AnalyticsRange {
+  date_from: string; // YYYY-MM-DD (analytics tz)
+  date_to: string;
+  timezone: string;
+  default_applied: boolean;
+}
+
+export interface HeatmapCell {
+  weekday: number; // 0=Saturday … 6=Friday
+  hour: number; // 0..23
+  count: number;
+}
+
+export interface PostingHeatmap {
+  cells: HeatmapCell[];
+  weekday_labels: string[];
+  total: number;
+  peak: HeatmapCell | null;
+  enough_data: boolean;
+}
+
+export interface VolumePoint {
+  period: string; // "YYYY-MM-DD" (by_day) or "YYYY-Www" (by_week)
+  total: number;
+  qualified: number;
+}
+
+export interface VolumeTrends {
+  by_day: VolumePoint[];
+  by_week: VolumePoint[];
+  category: string;
+  enough_data: boolean;
+}
+
+export interface BudgetBucket {
+  lo: number | null; // lo=hi=null marks the unknown / partial-budget band
+  hi: number | null;
+  count: number;
+}
+
+export interface BudgetDistribution {
+  buckets: BudgetBucket[];
+  tier1_count: number;
+  tier2_count: number;
+  unknown_count: number;
+  total: number;
+  enough_data: boolean;
+}
+
+export interface CompetitionPoint {
+  age_lo_h: number;
+  age_hi_h: number;
+  median: number;
+  p25: number;
+  p75: number;
+  n: number;
+}
+
+export interface CompetitionDynamics {
+  age_curve: CompetitionPoint[];
+  crowded_bids: number;
+  crowded_after_hours: number | null;
+  headline: string;
+  by_hour: number[]; // length 24
+  enough_data: boolean;
+}
+
+export interface TimeToClose {
+  mean: number | null;
+  median: number | null;
+  p25: number | null;
+  p75: number | null;
+}
+
+export interface MissedProject {
+  id: number;
+  title: string | null;
+  url: string | null;
+  budget_usd: number | null;
+}
+
+export interface OutcomeAnalytics {
+  hired_count: number;
+  no_hire_count: number;
+  unknown_count: number;
+  open_count: number;
+  hired_share: number | null;
+  no_hire_share: number | null;
+  time_to_close_hours: TimeToClose;
+  missed: MissedProject[];
+  missed_count: number;
+  enough_data: boolean;
+}
+
+export interface FunnelStage {
+  key: string; // seen | favourited | applied | in_discussion | won
+  label: string;
+  count: number;
+  conv_from_prev: number | null;
+  lag_median_hours: number | null;
+}
+
+export interface Funnel {
+  stages: FunnelStage[];
+  seen: number;
+  enough_data: boolean;
+}
+
+export interface Tip {
+  key: string; // peak_window | bid_speed | win_timing | score_threshold | budget_fallback
+  text: string;
+  evidence: Record<string, unknown>;
+}
+
+export interface AnalyticsOverview {
+  range: AnalyticsRange;
+  heatmap: PostingHeatmap;
+  volume: VolumeTrends;
+  budget: BudgetDistribution;
+  competition: CompetitionDynamics;
+  outcomes: OutcomeAnalytics;
+  funnel: Funnel;
+  tips: Tip[];
+}

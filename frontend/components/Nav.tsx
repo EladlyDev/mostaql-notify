@@ -7,6 +7,7 @@ import {
   Home,
   ListChecks,
   KanbanSquare,
+  BarChart3,
   Settings,
   LogOut,
   Menu,
@@ -21,6 +22,7 @@ const NAV_ITEMS = [
   { href: "/", label: "الرئيسية", icon: Home },
   { href: "/projects", label: "المشاريع", icon: ListChecks },
   { href: "/board", label: "اللوحة", icon: KanbanSquare },
+  { href: "/analytics", label: "التحليلات", icon: BarChart3 },
   { href: "/settings", label: "الإعدادات", icon: Settings },
 ] as const;
 

@@ -103,3 +103,38 @@ export function formatHiringRate(rate: number | null): string {
   }
   return bidiIsolate(`%${numberFmt.format(rate)}`);
 }
+
+// Feature 6 — analytics formatters.
+
+const dateOnlyFmt = new Intl.DateTimeFormat("ar", {
+  // UTC anchor: the period strings are already calendar dates bucketed in the analytics tz
+  // server-side, so they are labels (not instants) and must not shift across a tz boundary.
+  timeZone: "UTC",
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+});
+
+/**
+ * A calendar-date label, bidi-isolated. Accepts a plain "YYYY-MM-DD" (an
+ * already-bucketed analytics date) or a full ISO instant. Null → em dash.
+ */
+export function formatDateOnly(iso: string | null): string {
+  if (!iso) return EM_DASH;
+  const d = new Date(iso.length === 10 ? `${iso}T00:00:00Z` : iso);
+  if (Number.isNaN(d.getTime())) return EM_DASH;
+  return bidiIsolate(dateOnlyFmt.format(d));
+}
+
+const percentFmt = new Intl.NumberFormat("ar-EG", {
+  style: "percent",
+  maximumFractionDigits: 1,
+});
+
+/** A 0–1 fraction as an Arabic percentage, bidi-isolated. Null → "غير متاح". */
+export function formatPercent(fraction: number | null): string {
+  if (fraction === null || fraction === undefined || Number.isNaN(fraction)) {
+    return "غير متاح";
+  }
+  return bidiIsolate(percentFmt.format(fraction));
+}
