@@ -99,11 +99,20 @@ async def run_poll_cycle(session, fetcher, sender, settings, *, now=None) -> Scr
         await _finish_success(session, breaker, sender, settings, run)
         return run
 
-    # 4) Idempotent ingest: insert new ids as pending; existing ids are re-observations (no change).
+    # 4) Idempotent ingest: insert new ids as pending; existing ids are re-observations.
     existing_ids = {mid for (mid,) in session.query(Project.mostaql_id).all()}
+    relisted_bids: dict[str, int] = {}  # still-listed known projects -> fresh (uncapped) listing total
     for row in rows:
         if row["mostaql_id"] in existing_ids:
             run.updated_count += 1
+            # The listing is re-fetched every cycle and carries the authoritative, uncapped offer
+            # count for ALL listed projects — not just brand-new ones. A project first seen minutes
+            # after posting (≈0 bids) would otherwise stay frozen at that stale count until a paced,
+            # capped detail re-check happens to reach it; refresh it from the listing here for free
+            # (no extra fetch). merge_bids_count keeps the larger value, so this never downgrades.
+            observed = row.get("bids_count")
+            if observed is not None:
+                relisted_bids[row["mostaql_id"]] = observed
         else:
             session.add(Project(
                 mostaql_id=row["mostaql_id"], url=row.get("url"),
@@ -113,6 +122,11 @@ async def run_poll_cycle(session, fetcher, sender, settings, *, now=None) -> Scr
                 scraped_at=now, raw={"listing": row},
             ))
             run.new_count += 1
+    if relisted_bids:
+        for project in (
+            session.query(Project).filter(Project.mostaql_id.in_(list(relisted_bids))).all()
+        ):
+            project.bids_count = merge_bids_count(relisted_bids[project.mostaql_id], project.bids_count)
     session.commit()
 
     # 5) Evaluate pending projects (new + retried), capped per cycle (politeness).
