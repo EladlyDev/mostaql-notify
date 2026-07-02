@@ -787,3 +787,47 @@ async def test_qualified_permanent_send_failure_is_terminal_and_alerts(db_sessio
     assert run.error_count >= 1
     assert run.status == RunStatus.partial
     assert any("Health alert: NOTIFY_ERROR" in m for m in sender.sent)
+
+
+# ------------------------------------------- re-listed projects refresh bids from the listing (free)
+
+
+async def test_relisted_project_bids_refreshed_from_listing(db_session, settings):
+    """A still-listed known project's stale bid count is refreshed from the (uncapped) listing every
+    cycle — no detail fetch — and the refresh never downgrades a larger stored count.
+
+    Regression: a project first seen minutes after posting (≈0 bids) used to stay frozen at that
+    count until a paced detail re-check happened to reach it, so the feed showed 0 bids for projects
+    that already had many. ``listing.html`` carries a real offer count for every row.
+    """
+    _prep(db_session, settings)
+    # Detail fetches off: assert purely on the listing-driven refresh of already-known projects.
+    set_setting(db_session, settings, "max_fetches_per_cycle", 0)
+
+    now = utcnow()
+    # Two ids that appear in listing.html: 1252460 (8 offers) and 1252806 (4 offers).
+    db_session.add(Project(  # scraped ≈at posting with 0 bids -> must climb to the listing's 8
+        mostaql_id="1252460", url="https://mostaql.com/project/1252460-x", title="fresh-when-seen",
+        category="development", bids_count=0,
+        site_status=ProjectStatus.unknown, eval_status=EvalStatus.disqualified,
+        scraped_at=now, raw={},
+    ))
+    db_session.add(Project(  # already holds a higher (uncapped) total -> listing 4 must NOT downgrade
+        mostaql_id="1252806", url="https://mostaql.com/project/1252806-x", title="already-high",
+        category="development", bids_count=10,
+        site_status=ProjectStatus.unknown, eval_status=EvalStatus.disqualified,
+        scraped_at=now, raw={},
+    ))
+    db_session.commit()
+
+    fetcher = FakeFetcher([("projects/development", 200, read_fixture("listing.html"), None)])
+    sender = make_sender()
+    run = await run_poll_cycle(db_session, fetcher, sender, settings, now=now)
+
+    climbed = db_session.query(Project).filter_by(mostaql_id="1252460").one()
+    kept = db_session.query(Project).filter_by(mostaql_id="1252806").one()
+    assert climbed.bids_count == 8      # 0 -> 8, refreshed from the listing for free
+    assert kept.bids_count == 10        # 10 vs listing's 4 -> never downgrades
+    assert run.updated_count == 2       # both were re-observations, not new
+    # The refresh costs no extra fetch: only the listing was hit, no /project/ detail pages.
+    assert not any("/project/" in c for c in fetcher.calls)
