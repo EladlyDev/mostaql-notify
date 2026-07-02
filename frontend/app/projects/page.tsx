@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useSyncExternalStore } from "react";
+import { Suspense, useCallback, useState } from "react";
 import { LayoutGrid, Table as TableIcon } from "lucide-react";
 
 import { ApiError } from "@/lib/api";
@@ -19,32 +19,34 @@ import { Loading } from "@/components/states/Loading";
 type View = "table" | "cards";
 const VIEW_KEY = "projects:view";
 
-function subscribe(callback: () => void): () => void {
-  window.addEventListener("storage", callback);
-  return () => window.removeEventListener("storage", callback);
-}
-
 function readView(): View {
-  const stored = window.localStorage.getItem(VIEW_KEY);
-  return stored === "cards" ? "cards" : "table";
+  if (typeof window === "undefined") return "table"; // SSR-safe default
+  try {
+    return window.localStorage.getItem(VIEW_KEY) === "cards" ? "cards" : "table";
+  } catch {
+    return "table"; // storage blocked (private mode / disabled) — fall back to the default
+  }
 }
 
-/** View preference persisted in localStorage, read via useSyncExternalStore
- *  so SSR/hydration is consistent and no setState-in-effect is needed. */
+/** View preference held in plain React state so a click ALWAYS re-renders and re-toggles — the
+ *  source of truth is in memory, with localStorage as best-effort persistence only. (A previous
+ *  version derived the view directly from localStorage via useSyncExternalStore, which wedges the
+ *  toggle whenever storage throws, since the state can then never change.) The lazy initializer
+ *  seeds from storage without a set-state-in-effect, and this subtree is client-rendered behind
+ *  Suspense (useSearchParams), so reading storage on the first render causes no hydration mismatch. */
 function useViewPreference(): [View, (v: View) => void] {
-  const view = useSyncExternalStore<View>(
-    subscribe,
-    readView,
-    () => "table" // server snapshot
-  );
+  const [view, setViewState] = useState<View>(readView);
 
-  const update = useCallback((v: View) => {
-    window.localStorage.setItem(VIEW_KEY, v);
-    // Notify same-tab listeners (storage event only fires cross-tab).
-    window.dispatchEvent(new StorageEvent("storage", { key: VIEW_KEY }));
+  const setView = useCallback((v: View) => {
+    setViewState(v);
+    try {
+      window.localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      /* best-effort persistence */
+    }
   }, []);
 
-  return [view, update];
+  return [view, setView];
 }
 
 function ProjectsFeed() {
